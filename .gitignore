@@ -1,3 +1,19 @@
-build
+# CMake / STM32 build directories
+/build/
+/cmake-build-*/
+/Debug/
+/Release/
+
+# Firmware and intermediate files generated outside build directories
+*.elf
+*.hex
+*.bin
+*.map
+*.o
+*.obj
+*.d
+*.lst
+*.su
+
+# STM32CubeMX temporary files
 mx.scratch
-!.settings

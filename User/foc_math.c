@@ -2,18 +2,18 @@
 #include <math.h>
 #include "motor_param.h"
 
-FOC_Clarke_t FOC_Clarke(float I_a, float I_b, float I_c)
+FOC_Clarke_HandleTypeDef FOC_Clarke(float I_a, float I_b, float I_c)
 {
     (void)I_c; // Unused parameter
-    FOC_Clarke_t clarke_output;
+    FOC_Clarke_HandleTypeDef clarke_output;
     clarke_output.I_alpha = I_a;
     clarke_output.I_beta = (I_a + 2.0f * I_b) * FOC_INV_SQRT3;
     return clarke_output;
 }
 
-FOC_Park_t FOC_Park(float I_alpha, float I_beta, float theta_e)
+FOC_Park_HandleTypeDef FOC_Park(float I_alpha, float I_beta, float theta_e)
 {
-    FOC_Park_t park_output;
+    FOC_Park_HandleTypeDef park_output;
     float sin_theta = sinf(theta_e);
     float cos_theta = cosf(theta_e);
     park_output.I_d = I_alpha * cos_theta + I_beta * sin_theta;
@@ -21,9 +21,9 @@ FOC_Park_t FOC_Park(float I_alpha, float I_beta, float theta_e)
     return park_output;
 }
 
-FOC_inv_Park_t FOC_inv_Park(float V_d, float V_q, float theta_e)
+FOC_inv_Park_HandleTypeDef FOC_inv_Park(float V_d, float V_q, float theta_e)
 {
-    FOC_inv_Park_t inv_park_output;
+    FOC_inv_Park_HandleTypeDef inv_park_output;
     float sin_theta = sinf(theta_e);
     float cos_theta = cosf(theta_e);
     inv_park_output.V_alpha = V_d * cos_theta - V_q * sin_theta;

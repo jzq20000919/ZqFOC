@@ -20,7 +20,8 @@
 #define FOC_TWO_PI              6.28318530717958647692f
 #define FOC_INV_SQRT3           0.5773502691896258f
 #define FOC_SQRT3               1.7320508075688772f
+
+#define ENCODER_CPR    4096U
 #endif // MOTOR_PARAM_H
 
 /* ================= Encoder ================= */
-#define ENCODER_CPR    4096U

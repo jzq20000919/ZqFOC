@@ -19,7 +19,7 @@ void FOC_ENCODER_Update(FOC_ENCODER_HandleTypeDef *encoder, float dt)
 {
     int32_t d_count;
     encoder->count = __HAL_TIM_GET_COUNTER(encoder->htim);
-    encoder->angle_M = (float)encoder->count * 360.0f / (float)ENCODER_CPR;
+    encoder->angle_M = (float)encoder->count * FOC_TWO_PI / (float)ENCODER_CPR;
     encoder->angle_E = encoder->angle_M * MOTOR_POLE_PAIRS + encoder->angle_E_offset;
     encoder->angle_E = FOC_Normalize(encoder->angle_E);
     d_count = encoder->count - encoder->last_count;

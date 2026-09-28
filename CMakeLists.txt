@@ -47,6 +47,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     User/foc_math.c
     User/foc_encoder.c
+    User/foc_current.c
+    User/foc_svpwm.c
+    User/foc_pi.c
+    User/foc_loop_cur.c
 )
 
 # Add include paths
