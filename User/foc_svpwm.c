@@ -35,15 +35,15 @@ void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float v_alpha, float v_b
     svpwm->duty_v = 0.5f + v_v / v_bus ;
     svpwm->duty_w = 0.5f + v_w / v_bus ;
 
-    //�޷�
+    //限幅
     if(svpwm->duty_u > SVPWM_DUTY_MAX) svpwm->duty_u = SVPWM_DUTY_MAX;
-    if(svpwm->duty_u < 0.0f) svpwm->duty_u = 0.0f;
+    if(svpwm->duty_u < SVPWM_DUTY_MIN) svpwm->duty_u = SVPWM_DUTY_MIN;
     if(svpwm->duty_v > SVPWM_DUTY_MAX) svpwm->duty_v = SVPWM_DUTY_MAX;
-    if(svpwm->duty_v < 0.0f) svpwm->duty_v = 0.0f;
+    if(svpwm->duty_v < SVPWM_DUTY_MIN) svpwm->duty_v = SVPWM_DUTY_MIN;
     if(svpwm->duty_w > SVPWM_DUTY_MAX) svpwm->duty_w = SVPWM_DUTY_MAX;
-    if(svpwm->duty_w < 0.0f) svpwm->duty_w = 0.0f;
+    if(svpwm->duty_w < SVPWM_DUTY_MIN) svpwm->duty_w = SVPWM_DUTY_MIN;
 
-    //ռ�ձ�-CCR
+    //占空比-CCR
     arr = __HAL_TIM_GET_AUTORELOAD(svpwm->htim);
     __HAL_TIM_SET_COMPARE(svpwm->htim, TIM_CHANNEL_1, (uint32_t)(svpwm->duty_u * arr));
     __HAL_TIM_SET_COMPARE(svpwm->htim, TIM_CHANNEL_2, (uint32_t)(svpwm->duty_v * arr));

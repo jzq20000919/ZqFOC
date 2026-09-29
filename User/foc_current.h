@@ -1,12 +1,12 @@
 #if !defined(FOC_CURRENT_H)
 #define FOC_CURRENT_H
 #include "stm32g4xx_hal.h"
-// ¶¨Òå³£Á¿
-#define SHUNT_RESISTANCE 0.003f//3mOhm²ÉÑùµç×è
-#define VREF 3.3f//²Î¿¼µçÑ¹
-#define ADC_RESOLUTION 4095.0f//ADC·Ö±æÂÊ
-#define ADC_OFFSET 2048.0f//ADCÆ«ÒÆ
-#define AMP_GAIN 10.0f//µçÁ÷·Å´ó±¶Êı
+// å®šä¹‰å¸¸é‡
+#define SHUNT_RESISTANCE 0.003f//3mOhmé‡‡æ ·ç”µé˜»
+#define VREF 3.3f//å‚è€ƒç”µå‹
+#define ADC_RESOLUTION 4095.0f//ADCåˆ†è¾¨ç‡
+#define ADC_OFFSET 2048.0f//ADCåç§»
+#define AMP_GAIN 10.0f//ç”µæµæ”¾å¤§å€æ•°
 #define CURRENT_SCALE (VREF / (ADC_RESOLUTION * SHUNT_RESISTANCE * AMP_GAIN))
 typedef struct
 {

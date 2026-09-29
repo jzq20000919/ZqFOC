@@ -1,7 +1,7 @@
 #include "foc_encoder.h"
 #include "motor_param.h"
 #include "foc_math.h"
-//³õÊ¼»¯
+//åˆå§‹åŒ–
 void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *htim)
 {
     encoder->htim = htim;
@@ -14,28 +14,28 @@ void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *hti
     __HAL_TIM_SET_COUNTER(encoder->htim, 0);
     HAL_TIM_Encoder_Start(encoder->htim, TIM_CHANNEL_ALL); 
 }
-//±àÂëÆ÷½Ç¶È×´Ì¬¸üÐÂ
+//ç¼–ç å™¨è§’åº¦çŠ¶æ€æ›´æ–°
 void FOC_ENCODER_UpdateAngle(FOC_ENCODER_HandleTypeDef *encoder)
 {
-    /* 1. ¶ÁÈ¡µ±Ç°±àÂëÆ÷¼ÆÊý */
+    /* 1. è¯»å–å½“å‰ç¼–ç å™¨è®¡æ•° */
     encoder->count = __HAL_TIM_GET_COUNTER(encoder->htim);
 
-    /* 2. ¼ÆËãµ¥È¦»úÐµ½Ç£¬·¶Î§ 0 ~ 2¦Ð */
+    /* 2. è®¡ç®—å•åœˆæœºæ¢°è§’ï¼ŒèŒƒå›´ 0 ~ 2Ï€ */
     encoder->angle_m =(float)encoder->count* FOC_TWO_PI/ (float)ENCODER_CPR;
 
-    /* 3. »úÐµ½Ç -> µç½Ç¶È */
+    /* 3. æœºæ¢°è§’ -> ç”µè§’åº¦ */
     encoder->angle_e =encoder->angle_m * MOTOR_POLE_PAIRS+ encoder->angle_e_offset;
-    /* 4. µç½Ç¶ÈÏÞÖÆÔÚ 0 ~ 2¦Ð */
+    /* 4. ç”µè§’åº¦é™åˆ¶åœ¨ 0 ~ 2Ï€ */
     encoder->angle_e =FOC_MATH_Normalize(encoder->angle_e);
 }
-//±àÂëÆ÷ËÙ¶È×´Ì¬¸üÐÂ
+//ç¼–ç å™¨é€Ÿåº¦çŠ¶æ€æ›´æ–°
 void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt)
 {
     int32_t count_now;
     int32_t d_count;
     count_now = __HAL_TIM_GET_COUNTER(encoder->htim);
     d_count = count_now - encoder->spd_last_count;
-    //´¦Àí½Ç¶È»ØÈÆ
+    //å¤„ç†è§’åº¦å›žç»•
     if (d_count > (ENCODER_CPR / 2))
     {
         d_count -= ENCODER_CPR;
@@ -44,7 +44,7 @@ void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt)
     {
         d_count += ENCODER_CPR;
     }
-    //¼ÆËãËÙ¶È£¬µ¥Î»Îªrpm
+    //è®¡ç®—é€Ÿåº¦ï¼Œå•ä½ä¸ºrpm
     if(dt >0.0f)
     {
         encoder->speed = (float)d_count * 60.0f / (float)ENCODER_CPR / dt;
@@ -53,10 +53,10 @@ void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt)
     {
         encoder->speed = 0.0f;
     }
-    //±£´æ´Ë´ÎµÄ¼ÆÊýÖµÎªÉÏÒ»´ÎµÄ¼ÆÊýÖµ
+    //ä¿å­˜æ­¤æ¬¡çš„è®¡æ•°å€¼ä¸ºä¸Šä¸€æ¬¡çš„è®¡æ•°å€¼
     encoder->spd_last_count = count_now;
 }
-//»ñÈ¡Æ«ÖÃ
+//èŽ·å–åç½®
 void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float offset)
 {
     encoder->angle_e_offset = FOC_MATH_Normalize(offset);

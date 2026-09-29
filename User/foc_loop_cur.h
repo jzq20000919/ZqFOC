@@ -24,7 +24,7 @@ typedef struct {
     float v_beta;
 } FOC_LOOP_CUR_HandleTypeDef;
 
-void FOC_LOOP_CUR_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleTypeDef *encoder, FOC_CURRENT_HandleTypeDef *current, FOC_SVPWM_HandleTypeDef *svpwm,float kp_id,float kp_iq,float ki_id,float ki_iq,float voltage_limit);
+void FOC_LOOP_CUR_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleTypeDef *encoder, FOC_CURRENT_HandleTypeDef *current, FOC_SVPWM_HandleTypeDef *svpwm,float kp_id,float ki_id,float kp_iq,float ki_iq,float voltage_limit);
 
 void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float v_bus);
 

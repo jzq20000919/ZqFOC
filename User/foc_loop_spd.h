@@ -6,7 +6,7 @@
 #include "motor_param.h"
 
 typedef struct {
-    FOC_PI_HandleTypeDef pi_spd;//ÊôÓÚloop_spd×Ô¼º£¬ËùÒÔ²»ĞèÒªÖ¸Õë
+    FOC_PI_HandleTypeDef pi_spd;//å±äºloop_spdè‡ªå·±ï¼Œæ‰€ä»¥ä¸éœ€è¦æŒ‡é’ˆ
     FOC_ENCODER_HandleTypeDef *encoder;
     FOC_LOOP_CUR_HandleTypeDef *loop_cur;
     float speed_ref;

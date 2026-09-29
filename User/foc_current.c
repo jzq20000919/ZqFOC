@@ -19,7 +19,7 @@ void FOC_CURRENT_Update(FOC_CURRENT_HandleTypeDef *current)
     current-> raw_a = HAL_ADCEx_InjectedGetValue(current->hadc1, ADC_INJECTED_RANK_1);
     current-> raw_b = HAL_ADCEx_InjectedGetValue(current->hadc2, ADC_INJECTED_RANK_1);
     current-> raw_c = HAL_ADCEx_InjectedGetValue(current->hadc1, ADC_INJECTED_RANK_2);
-    current->i_a = (float)current->raw_a * CURRENT_SCALE;
-    current->i_b = (float)current->raw_b * CURRENT_SCALE;
-    current->i_c = (float)current->raw_c * CURRENT_SCALE;
+    current->i_a = ((float)current->raw_a - ADC_OFFSET) * CURRENT_SCALE;
+    current->i_b = ((float)current->raw_b - ADC_OFFSET) * CURRENT_SCALE;
+    current->i_c = ((float)current->raw_c - ADC_OFFSET) * CURRENT_SCALE;
 }

@@ -48,10 +48,12 @@
 /* USER CODE BEGIN PV */
 FOC_ENCODER_HandleTypeDef foc_encoder;
 FOC_CURRENT_HandleTypeDef foc_current;
+FOC_BUS_VOLTAGE_HandleTypeDef foc_bus_voltage;
 FOC_SVPWM_HandleTypeDef foc_svpwm;
 FOC_LOOP_CUR_HandleTypeDef loop_cur;
 FOC_LOOP_SPD_HandleTypeDef loop_spd;
 FOC_LOOP_POS_HandleTypeDef loop_pos;
+uint32_t bus_voltage_last_tick;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,19 +105,23 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-  //������
+  // 初始化编码器
   FOC_ENCODER_Init(&foc_encoder, &htim3);
-  //��������
+  // 初始化三相电流采样
   FOC_CURRENT_Init(&foc_current, &hadc1, &hadc2);
+  FOC_BUS_VOLTAGE_Init(&foc_bus_voltage, &hadc1);
+  bus_voltage_last_tick = HAL_GetTick();
   //SVPWM
   FOC_SVPWM_Init(&foc_svpwm, &htim1);
-  //������
-  FOC_LOOP_CUR_Init(&loop_cur, &foc_encoder, &foc_current, &foc_svpwm, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-  //�ٶȻ�
+  // 初始化电流环
+  FOC_LOOP_CUR_Init(&loop_cur, &foc_encoder, &foc_current, &foc_svpwm,
+                    0.0f, /* kp_id */ 0.0f, /* ki_id */
+                    0.0f, /* kp_iq */ 0.0f, /* ki_iq */ 0.0f /* voltage_limit */);
+  // 初始化速度环
   FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, 0.0f, 0.0f);
-  //λ�û�
+  // 初始化位置环
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, 0.0f, 0.0f);
-  //����1khz����
+  // 启动 1 kHz 定时器中断
   HAL_TIM_Base_Start_IT(&htim6);
   
   /* USER CODE END 2 */
@@ -127,6 +133,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    uint32_t now = HAL_GetTick();
+    if ((uint32_t)(now - bus_voltage_last_tick) >= 10U)
+    {
+      bus_voltage_last_tick = now;
+      FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -177,7 +189,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-//�ٶȻ���λ�û��Ļص�
+// 速度环和位置环的定时回调
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   static uint8_t pos_cnt = 0;

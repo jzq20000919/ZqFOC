@@ -12,14 +12,14 @@ void FOC_PI_Init(FOC_PI_HandleTypeDef *pi, float kp, float ki, float output_min,
 float FOC_PI_Update(FOC_PI_HandleTypeDef *pi, float reference, float feedback, float dt)
 {
     float error = reference - feedback;
-    pi->integral += error * dt;
-    //»ı·ÖÏŞ·ù
+    pi->integral += pi->ki * error * dt;
+    //ç§¯åˆ†é™å¹…
     if (pi->integral >pi->output_max)
      pi->integral = pi->output_max;
     if (pi->integral < pi->output_min) {
         pi->integral = pi->output_min;
     }
-    float output = pi->kp * error + pi->ki * pi->integral;
+    float output = pi->kp * error + pi->integral;
     if (output < pi->output_min) {
         output = pi->output_min;
     } else if (output > pi->output_max) {

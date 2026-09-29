@@ -8,6 +8,7 @@
 #include "foc_pi.h"
 #include "foc_encoder.h"
 #include "foc_current.h"
+#include "foc_bus_voltage.h"
 #include "foc_svpwm.h"
 #include "foc_loop_cur.h"
 #include "foc_loop_spd.h"

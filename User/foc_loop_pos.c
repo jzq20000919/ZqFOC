@@ -18,14 +18,14 @@ void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt)
 {
     float error;
     loop_pos ->position_fbk = loop_pos->encoder->angle_m;
-    //Î»ÖÃÎó²î
+    //ä½ç½®è¯¯å·®
     error = loop_pos->position_ref - loop_pos->position_fbk;
-    //½«Îó²îÏÞÖÆÔÚ [-¦Ð, ¦Ð] ·¶Î§ÄÚ
+    //å°†è¯¯å·®é™åˆ¶åœ¨ [-Ï€, Ï€] èŒƒå›´å†…
     if (error > FOC_PI) 
     error -= FOC_TWO_PI;
     if (error < -FOC_PI) 
     error += FOC_TWO_PI;
-    //Î»ÖÃPIÊä³ö×ªËÙÄ¿±ê
+    //ä½ç½®PIè¾“å‡ºè½¬é€Ÿç›®æ ‡
     loop_pos->speed_ref = FOC_PI_Update(&loop_pos->pi_pos, error, 0.0f, dt);
     FOC_LOOP_SPD_SetSpeedRef(loop_pos->loop_spd, loop_pos->speed_ref);
 }

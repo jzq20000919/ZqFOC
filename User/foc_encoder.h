@@ -5,24 +5,24 @@
 
 typedef struct
 {
-    TIM_HandleTypeDef *htim;//±àÂëÆ÷½ÓÔÚÄÄ¸ö¶¨Ê±Æ÷ÉÏ
-    int32_t spd_last_count;//ÉÏÒ»´ÎµÄ¼ÆÊıÖµ
-    int32_t count;//µ±Ç°¼ÆÊıÖµ
-    float angle_m;//»úĞµ½Ç¶È
-    float angle_e;//µç½Ç¶È
-    float angle_e_offset;//µç½Ç¶ÈÁãµãÆ«ÖÃ
+    TIM_HandleTypeDef *htim;//ç¼–ç å™¨æ¥åœ¨å“ªä¸ªå®šæ—¶å™¨ä¸Š
+    int32_t spd_last_count;//ä¸Šä¸€æ¬¡çš„è®¡æ•°å€¼
+    int32_t count;//å½“å‰è®¡æ•°å€¼
+    float angle_m;//æœºæ¢°è§’åº¦
+    float angle_e;//ç”µè§’åº¦
+    float angle_e_offset;//ç”µè§’åº¦é›¶ç‚¹åç½®
     float speed;//rpm
 } FOC_ENCODER_HandleTypeDef;
 
-//³õÊ¼»¯,ĞèÒªÒ»¸ö¶¨Ê±Æ÷¾ä±úºÍÒ»¸ö±àÂëÆ÷Ä¿±ê
+//åˆå§‹åŒ–,éœ€è¦ä¸€ä¸ªå®šæ—¶å™¨å¥æŸ„å’Œä¸€ä¸ªç¼–ç å™¨ç›®æ ‡
 void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *htim);
 
-//¸üĞÂ±àÂëÆ÷½Ç¶È,ĞèÒªÒ»¸ö±àÂëÆ÷¾ä±úºÍÊ±¼ä¼ä¸ôdt
+//æ›´æ–°ç¼–ç å™¨è§’åº¦,éœ€è¦ä¸€ä¸ªç¼–ç å™¨å¥æŸ„å’Œæ—¶é—´é—´éš”dt
 void FOC_ENCODER_UpdateAngle(FOC_ENCODER_HandleTypeDef *encoder);
-//¸üĞÂ±àÂëÆ÷ËÙ¶È
+//æ›´æ–°ç¼–ç å™¨é€Ÿåº¦
 void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt);
 
-//ÉèÖÃµç½Ç¶ÈÁãµãÆ«ÖÃ
+//è®¾ç½®ç”µè§’åº¦é›¶ç‚¹åç½®
 void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float offset);
 
 
