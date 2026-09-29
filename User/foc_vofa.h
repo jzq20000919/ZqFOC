@@ -23,7 +23,5 @@ FOC_CONTROL_MODE FOC_VOFA_GetControlMode(void);
 void FOC_VOFA_RequestTelemetry(void);
 void FOC_VOFA_ProcessTx(void);
 void FOC_VOFA_ProcessRx(void);
-void FOC_VOFA_RxEventCallback(UART_HandleTypeDef *uart, uint16_t size);
-void FOC_VOFA_TxCompleteCallback(UART_HandleTypeDef *uart);
 
 #endif // FOC_VOFA_H
