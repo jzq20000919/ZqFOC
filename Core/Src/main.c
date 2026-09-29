@@ -162,7 +162,18 @@ int main(void)
   {
     Error_Handler();
   }
-
+  //启动定时器4驱动ADC
+  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  //启动三相互补PWM
+  FOC_SVPWM_Start(&foc_svpwm);
+  //启动1khz速度/位置环计时器
+  if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -241,6 +252,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
     FOC_LOOP_SPD_Update(&loop_spd,SPEED_LOOP_TS);
 
+  }
+}
+//ADC注入转换回调
+void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if(hadc == &hadc1)
+  {
+    FOC_LOOP_CUR_Update(&foc_current,foc_bus_voltage.voltage);
   }
 }
 /* USER CODE END 4 */

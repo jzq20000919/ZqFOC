@@ -10,6 +10,16 @@ void FOC_SVPWM_Init(FOC_SVPWM_HandleTypeDef *svpwm, TIM_HandleTypeDef *htim)
     svpwm->duty_w = 0.5f;
 }
 
+void FOC_SVPWM_Start(FOC_SVPWM_HandleTypeDef *svpwm)
+{
+    HAL_TIM_PWM_Start(svpwm->htim, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(svpwm->htim, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Start(svpwm->htim, TIM_CHANNEL_3);
+    HAL_TIMEx_PWMN_Start(svpwm->htim, TIM_CHANNEL_1);
+    HAL_TIMEx_PWMN_Start(svpwm->htim, TIM_CHANNEL_2);
+    HAL_TIMEx_PWMN_Start(svpwm->htim, TIM_CHANNEL_3);
+}
+
 void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float v_alpha, float v_beta, float v_bus)
 {
     float v_u, v_v, v_w;
@@ -43,7 +53,7 @@ void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float v_alpha, float v_b
     if(svpwm->duty_w > SVPWM_DUTY_MAX) svpwm->duty_w = SVPWM_DUTY_MAX;
     if(svpwm->duty_w < SVPWM_DUTY_MIN) svpwm->duty_w = SVPWM_DUTY_MIN;
 
-    //占空比-CCR
+    //占空�?-CCR
     arr = __HAL_TIM_GET_AUTORELOAD(svpwm->htim);
     __HAL_TIM_SET_COMPARE(svpwm->htim, TIM_CHANNEL_1, (uint32_t)(svpwm->duty_u * arr));
     __HAL_TIM_SET_COMPARE(svpwm->htim, TIM_CHANNEL_2, (uint32_t)(svpwm->duty_v * arr));
