@@ -41,7 +41,7 @@ HAL_StatusTypeDef FOC_VOFA_Init(UART_HandleTypeDef *uart,
 FOC_CONTROL_MODE FOC_VOFA_GetControlMode(void);
 /**
  * @brief  标记需要发送一帧遥测数据
- * @note   可由电流环中断调用；实际打包和DMA发送在主循环中进行。
+ * @note   可由电流环中断或停机时的主循环调用；打包和DMA发送均在主循环中进行。
  */
 void FOC_VOFA_RequestTelemetry(void);
 /**

@@ -32,12 +32,20 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum
+{
+  FOC_MOTOR_STOPPED = 0,
+  FOC_MOTOR_ALIGNING,
+  FOC_MOTOR_RUNNING
+} FOC_MOTOR_State;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define FOC_BUTTON_PORT        GPIOD
+#define FOC_BUTTON_PIN         GPIO_PIN_2
+#define FOC_BUTTON_DEBOUNCE_MS 30U
+#define FOC_IDLE_TELEMETRY_PERIOD_MS 10U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,6 +64,12 @@ FOC_LOOP_CUR_HandleTypeDef loop_cur;
 FOC_LOOP_SPD_HandleTypeDef loop_spd;
 FOC_LOOP_POS_HandleTypeDef loop_pos;
 uint32_t bus_voltage_last_tick;
+static uint32_t idle_telemetry_last_tick;
+static volatile FOC_MOTOR_State motor_state = FOC_MOTOR_STOPPED;
+static GPIO_PinState button_last_level;
+static GPIO_PinState button_stable_level;
+static uint32_t button_last_change_tick;
+static uint32_t alignment_start_tick;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,6 +80,137 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+ * @brief  立即关闭电机输出并清除控制目标
+ */
+static void FOC_MOTOR_Stop(void)
+{
+  FOC_MOTOR_State previous_state = motor_state;
+  motor_state = FOC_MOTOR_STOPPED;
+
+  // 先无条件关闭TIM1主输出，再停止触发源与各PWM通道。
+  __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
+  if (previous_state == FOC_MOTOR_RUNNING)
+  {
+    HAL_TIM_Base_Stop_IT(&htim6);
+    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_4);
+    HAL_ADCEx_InjectedStop_IT(&hadc1);
+    HAL_ADCEx_InjectedStop(&hadc2);
+  }
+  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+  HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+  HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
+  HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+
+  FOC_LOOP_SPD_SetSpeedRef(&loop_spd, 0.0f);
+  FOC_LOOP_CUR_SetReference(&loop_cur, 0.0f, 0.0f);
+  FOC_PI_Reset(&loop_cur.pi_id);
+  FOC_PI_Reset(&loop_cur.pi_iq);
+  FOC_PI_Reset(&loop_spd.pi_spd);
+  FOC_PI_Reset(&loop_pos.pi_pos);
+  FOC_ENCODER_UpdateAngle(&foc_encoder);
+  foc_encoder.spd_last_count = foc_encoder.count;
+  idle_telemetry_last_tick = HAL_GetTick();
+  FOC_LOOP_POS_SetPositionRef(&loop_pos, foc_encoder.angle_m);
+  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
+}
+
+/**
+ * @brief  开始电角度对齐，控制中断仍保持关闭
+ */
+static void FOC_MOTOR_BeginAlignment(void)
+{
+  FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
+  if (foc_bus_voltage.voltage <= 0.0f)
+  {
+    return;
+  }
+
+  // 丢弃停机期间收到的旧目标，按键启动后从零目标开始。
+  FOC_LOOP_SPD_SetSpeedRef(&loop_spd, 0.0f);
+  FOC_LOOP_CUR_SetReference(&loop_cur, 0.0f, 0.0f);
+  FOC_PI_Reset(&loop_cur.pi_id);
+  FOC_PI_Reset(&loop_cur.pi_iq);
+  FOC_PI_Reset(&loop_spd.pi_spd);
+  FOC_PI_Reset(&loop_pos.pi_pos);
+
+  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
+  FOC_SVPWM_Start(&foc_svpwm);
+  FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
+  alignment_start_tick = HAL_GetTick();
+  motor_state = FOC_MOTOR_ALIGNING;
+}
+
+/**
+ * @brief  对齐时间结束后启动电流环与速度环触发链
+ */
+static void FOC_MOTOR_ProcessAlignment(void)
+{
+  if (motor_state != FOC_MOTOR_ALIGNING ||
+      (uint32_t)(HAL_GetTick() - alignment_start_tick) < ENCODER_ALIGN_TIME_MS)
+  {
+    return;
+  }
+
+  if (foc_bus_voltage.voltage <= 0.0f)
+  {
+    FOC_MOTOR_Stop();
+    return;
+  }
+
+  FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
+  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
+  FOC_LOOP_SPD_SetSpeedRef(&loop_spd, 0.0f);
+  FOC_LOOP_CUR_SetReference(&loop_cur, 0.0f, 0.0f);
+  FOC_PI_Reset(&loop_cur.pi_id);
+  FOC_PI_Reset(&loop_cur.pi_iq);
+  FOC_PI_Reset(&loop_spd.pi_spd);
+  FOC_PI_Reset(&loop_pos.pi_pos);
+  FOC_LOOP_POS_SetPositionRef(&loop_pos, foc_encoder.angle_m);
+
+  // ADC注入组先就绪，最后启动CH4和TIM6，避免对齐磁场被电流环覆盖。
+  motor_state = FOC_MOTOR_RUNNING;
+  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
+      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK ||
+      HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+  {
+    FOC_MOTOR_Stop();
+  }
+}
+
+/**
+ * @brief  轮询SW1并在稳定按下沿切换启停
+ */
+static void FOC_MOTOR_ProcessButton(void)
+{
+  GPIO_PinState level = HAL_GPIO_ReadPin(FOC_BUTTON_PORT, FOC_BUTTON_PIN);
+  uint32_t now = HAL_GetTick();
+
+  if (level != button_last_level)
+  {
+    button_last_level = level;
+    button_last_change_tick = now;
+  }
+  if (level != button_stable_level &&
+      (uint32_t)(now - button_last_change_tick) >= FOC_BUTTON_DEBOUNCE_MS)
+  {
+    button_stable_level = level;
+    if (level == GPIO_PIN_SET)
+    {
+      if (motor_state == FOC_MOTOR_STOPPED)
+      {
+        FOC_MOTOR_BeginAlignment();
+      }
+      else
+      {
+        FOC_MOTOR_Stop();
+      }
+    }
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -109,6 +254,11 @@ int main(void)
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  // 记录上电时的按键电平；若一直按住，必须先松开再按才启动。
+  button_last_level = HAL_GPIO_ReadPin(FOC_BUTTON_PORT, FOC_BUTTON_PIN);
+  button_stable_level = button_last_level;
+  button_last_change_tick = HAL_GetTick();
+
   // 先校准ADC并启动采样运放，为后续电流采样做准备。
   if(HAL_ADCEx_Calibration_Start(&hadc1,ADC_SINGLE_ENDED) != HAL_OK)
   {
@@ -156,37 +306,13 @@ int main(void)
   FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, SPEED_KP, SPEED_KI);
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, POSITION_KP, POSITION_KI);
 
-  // 固定磁场完成电角度对齐；此时尚未启动注入采样，电流环不会改写PWM。
-  FOC_SVPWM_Start(&foc_svpwm);
-  FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
-  HAL_Delay(ENCODER_ALIGN_TIME_MS);
-  FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
-  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
-
-  // 对齐结束后启动ADC注入组与TIM1 CH4，形成16kHz电流环触发链。
-  if(HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if(HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
+  // 上电保持PWM、ADC注入组和控制定时器关闭，SW1按下后再对齐并启动。
   if(FOC_VOFA_Init(&huart2, &foc_encoder, &loop_cur, &loop_spd, &loop_pos) != HAL_OK)
   {
     Error_Handler();
   }
-  
-  // 最后启动TIM6：速度环1kHz，位置模式下位置环200Hz。
-  if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
-  {
-    Error_Handler();
-  }
+  foc_encoder.spd_last_count = __HAL_TIM_GET_COUNTER(&htim3);
+  idle_telemetry_last_tick = HAL_GetTick();
 
   /* USER CODE END 2 */
 
@@ -203,6 +329,21 @@ int main(void)
     {
       bus_voltage_last_tick = now;
       FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
+    }
+    FOC_MOTOR_ProcessButton();
+    FOC_MOTOR_ProcessAlignment();
+    now = HAL_GetTick();
+    if (motor_state != FOC_MOTOR_RUNNING)
+    {
+      uint32_t elapsed_ms = (uint32_t)(now - idle_telemetry_last_tick);
+      if (elapsed_ms >= FOC_IDLE_TELEMETRY_PERIOD_MS)
+      {
+        idle_telemetry_last_tick = now;
+        FOC_ENCODER_UpdateSpeed(&foc_encoder, (float)elapsed_ms * 0.001f);
+        loop_spd.speed_fbk = foc_encoder.speed;
+        // 停机时没有ADC回调，由主循环以100Hz请求遥测。
+        FOC_VOFA_RequestTelemetry();
+      }
     }
     FOC_VOFA_ProcessTx();
     FOC_VOFA_ProcessRx();
@@ -259,7 +400,7 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   static uint8_t pos_cnt = 0;
-  if(htim == &htim6)
+  if(htim == &htim6 && motor_state == FOC_MOTOR_RUNNING)
   {
     if(FOC_VOFA_GetControlMode() == FOC_CONTROL_POSITION)
     {
@@ -280,7 +421,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   static uint8_t telemetry_divider = 0U;
-  if(hadc == &hadc1)
+  if(hadc == &hadc1 && motor_state == FOC_MOTOR_RUNNING)
   {
     FOC_LOOP_CUR_Update(&loop_cur,foc_bus_voltage.voltage);
     if(++telemetry_divider >= 4U)

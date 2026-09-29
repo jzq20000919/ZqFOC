@@ -32,16 +32,17 @@ void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt)
 {
     int32_t count_now;
     int32_t d_count;
+    const int32_t counts_per_rev = (int32_t)ENCODER_CPR;
     count_now = __HAL_TIM_GET_COUNTER(encoder->htim);
     d_count = count_now - encoder->spd_last_count;
-    // 按单圈计数修正回绕，避免过零时产生虚假的转速尖峰。
-    if (d_count > (ENCODER_CPR / 2))
+    // 用有符号计数比较，避免无符号转换把微小计数差误判为整圈回绕。
+    if (d_count > (counts_per_rev / 2))
     {
-        d_count -= ENCODER_CPR;
+        d_count -= counts_per_rev;
     }
-    else if (d_count < -(ENCODER_CPR / 2))
+    else if (d_count < -(counts_per_rev / 2))
     {
-        d_count += ENCODER_CPR;
+        d_count += counts_per_rev;
     }
     if(dt >0.0f)
     {
