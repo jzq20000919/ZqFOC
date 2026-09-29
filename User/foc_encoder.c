@@ -9,7 +9,7 @@ void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *hti
     encoder->count = 0;
     encoder->angle_m = 0.0f;
     encoder->angle_e = 0.0f;
-    encoder->angle_e_offset = 0.0f;
+    encoder->angle_e_offset = ENCODER_ELECTRICAL_OFFSET;
     encoder->speed = 0.0f;
     __HAL_TIM_SET_COUNTER(encoder->htim, 0);
     HAL_TIM_Encoder_Start(encoder->htim, TIM_CHANNEL_ALL); 

@@ -3,9 +3,6 @@
 #include "stm32g4xx_hal.h"
 #include "motor_param.h"
 
-#define SVPWM_DUTY_MIN 0.05f
-#define SVPWM_DUTY_MAX 0.95f
-
 typedef struct 
 {
     TIM_HandleTypeDef *htim;

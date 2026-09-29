@@ -143,13 +143,19 @@ int main(void)
   FOC_SVPWM_Init(&foc_svpwm, &htim1);
   
   // 初始化电流环
-  FOC_LOOP_CUR_Init(&loop_cur, &foc_encoder, &foc_current, &foc_svpwm,
-                    0.0f, /* kp_id */ 0.0f, /* ki_id */
-                    0.0f, /* kp_iq */ 0.0f, /* ki_iq */ 0.0f /* voltage_limit */);
+  FOC_LOOP_CUR_Init(&loop_cur,
+                    &foc_encoder,
+                    &foc_current,
+                    &foc_svpwm,
+                    CURRENT_KP_D,
+                    CURRENT_KI_D,
+                    CURRENT_KP_Q,
+                    CURRENT_KI_Q,
+                    CURRENT_PI_VOLTAGE_LIMIT);
   // 初始化速度环
-  FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, 0.0f, 0.0f);
+  FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, SPEED_KP, SPEED_KI);
   // 初始化位置环
-  FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, 0.0f, 0.0f);
+  FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, POSITION_KP, POSITION_KI);
 
   //启动ADC注入组转换
   if(HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK)

@@ -58,7 +58,7 @@ void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float v_bus)
     //电压矢量限幅
     float v_limit;
     float v_mag;
-    v_limit = 0.9f * v_bus * FOC_INV_SQRT3;
+    v_limit = VOLTAGE_UTILIZATION * v_bus * FOC_INV_SQRT3;
     v_mag = sqrtf(loop_cur->v_d * loop_cur->v_d
             + loop_cur->v_q * loop_cur->v_q);
     if(v_mag > v_limit)
