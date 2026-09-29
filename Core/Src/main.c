@@ -105,14 +105,43 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
+  //启动ADC校准
+  if(HAL_ADCEx_Calibration_Start(&hadc1,ADC_SINGLE_ENDED) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if(HAL_ADCEx_Calibration_Start(&hadc2,ADC_SINGLE_ENDED) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  //启动OPAMP
+  if(HAL_OPAMP_Start(&hopamp1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if(HAL_OPAMP_Start(&hopamp2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if(HAL_OPAMP_Start(&hopamp3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  HAL_Delay(1);
+
   // 初始化编码器
   FOC_ENCODER_Init(&foc_encoder, &htim3);
+  
   // 初始化三相电流采样
   FOC_CURRENT_Init(&foc_current, &hadc1, &hadc2);
+  
+  //初始化母线电压采样
   FOC_BUS_VOLTAGE_Init(&foc_bus_voltage, &hadc1);
   bus_voltage_last_tick = HAL_GetTick();
+  
   //SVPWM
   FOC_SVPWM_Init(&foc_svpwm, &htim1);
+  
   // 初始化电流环
   FOC_LOOP_CUR_Init(&loop_cur, &foc_encoder, &foc_current, &foc_svpwm,
                     0.0f, /* kp_id */ 0.0f, /* ki_id */
@@ -123,7 +152,17 @@ int main(void)
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, 0.0f, 0.0f);
   // 启动 1 kHz 定时器中断
   HAL_TIM_Base_Start_IT(&htim6);
-  
+
+  //启动ADC注入组转换
+  if(HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if(HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -149,8 +188,8 @@ int main(void)
   */
 void SystemClock_Config(void)
 {
-  RCC_OscInitTypeDef rcc_osc_init_struct = {0};
-  RCC_ClkInitTypeDef rcc_clk_init_struct = {0};
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
   */
@@ -159,30 +198,30 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  rcc_osc_init_struct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  rcc_osc_init_struct.HSEState = RCC_HSE_ON;
-  rcc_osc_init_struct.PLL.PLLState = RCC_PLL_ON;
-  rcc_osc_init_struct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  rcc_osc_init_struct.PLL.PLLM = RCC_PLLM_DIV2;
-  rcc_osc_init_struct.PLL.PLLN = 85;
-  rcc_osc_init_struct.PLL.PLLP = RCC_PLLP_DIV2;
-  rcc_osc_init_struct.PLL.PLLQ = RCC_PLLQ_DIV2;
-  rcc_osc_init_struct.PLL.PLLR = RCC_PLLR_DIV2;
-  if (HAL_RCC_OscConfig(&rcc_osc_init_struct) != HAL_OK)
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
+  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  rcc_clk_init_struct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  rcc_clk_init_struct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  rcc_clk_init_struct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  rcc_clk_init_struct.APB1CLKDivider = RCC_HCLK_DIV1;
-  rcc_clk_init_struct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&rcc_clk_init_struct, FLASH_LATENCY_4) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
