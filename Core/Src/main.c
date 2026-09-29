@@ -186,6 +186,11 @@ int main(void)
   {
     Error_Handler();
   }
+
+  if(FOC_VOFA_Init(&huart2, &foc_encoder, &loop_cur, &loop_spd, &loop_pos) != HAL_OK)
+  {
+    Error_Handler();
+  }
   
   //启动1khz速度/位置环计时器
   if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
@@ -208,6 +213,8 @@ int main(void)
       bus_voltage_last_tick = now;
       FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
     }
+    FOC_VOFA_ProcessTx();
+    FOC_VOFA_ProcessRx();
   }
   /* USER CODE END 3 */
 }
@@ -264,21 +271,33 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   static uint8_t pos_cnt = 0;
   if(htim == &htim6)
   {
-    if(++pos_cnt >=5)
+    if(FOC_VOFA_GetControlMode() == FOC_CONTROL_POSITION)
     {
-      pos_cnt = 0;
-      FOC_LOOP_POS_Update(&loop_pos,POSITION_LOOP_TS);
+      if(++pos_cnt >= 5U)
+      {
+        pos_cnt = 0U;
+        FOC_LOOP_POS_Update(&loop_pos, POSITION_LOOP_TS);
+      }
     }
-    FOC_LOOP_SPD_Update(&loop_spd,SPEED_LOOP_TS);
-
+    else
+    {
+      pos_cnt = 0U;
+    }
+    FOC_LOOP_SPD_Update(&loop_spd, SPEED_LOOP_TS);
   }
 }
 //ADC注入转换回调
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
+  static uint8_t telemetry_divider = 0U;
   if(hadc == &hadc1)
   {
     FOC_LOOP_CUR_Update(&loop_cur,foc_bus_voltage.voltage);
+    if(++telemetry_divider >= 4U)
+    {
+      telemetry_divider = 0U;
+      FOC_VOFA_RequestTelemetry();
+    }
   }
 }
 /* USER CODE END 4 */

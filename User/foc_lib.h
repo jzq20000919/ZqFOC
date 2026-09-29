@@ -13,5 +13,6 @@
 #include "foc_loop_cur.h"
 #include "foc_loop_spd.h"
 #include "foc_loop_pos.h"
+#include "foc_vofa.h"
 
 #endif // FOC_LIB_H
