@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "foc_svpwm.h"
 #include "opamp.h"
 #include "tim.h"
 #include "gpio.h"
@@ -173,13 +174,21 @@ int main(void)
   }
   //启动三相互补PWM
   FOC_SVPWM_Start(&foc_svpwm);
-  
+  //施加固定电角度磁场
+  FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
+  HAL_Delay(ENCODER_ALIGN_TIME_MS);
+  //计算电角度偏置
+  FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
+  //停止施加磁场
+  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
+
+
   //启动1khz速度/位置环计时器
   if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
   {
     Error_Handler();
   }
-  
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
