@@ -13,7 +13,10 @@
 /* ================= Control ================= */
 #define PWM_FREQUENCY_HZ        16000.0f
 #define CURRENT_LOOP_TS         (1.0f / PWM_FREQUENCY_HZ)
-
+#define SPEED_LOOP_TS           (1.0f / PWM_FREQUENCY_HZ)
+#define SPEED_LOOP_FREQUENCY    1000.0f
+#define POSITION_LOOP_FREQUENCY 200.0f
+#define POSITION_LOOP_TS        (1.0f / POSITION_LOOP_FREQUENCY)
 /* ================= Math ================= */
 
 #define FOC_PI                  3.14159265358979323846f
@@ -21,7 +24,7 @@
 #define FOC_INV_SQRT3           0.5773502691896258f
 #define FOC_SQRT3               1.7320508075688772f
 
+/* ================= Encoder ================= */
 #define ENCODER_CPR    4096U
 #endif // MOTOR_PARAM_H
 
-/* ================= Encoder ================= */

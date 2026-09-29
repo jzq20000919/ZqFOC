@@ -1,7 +1,8 @@
 #include "foc_loop_cur.h"
+#include "foc_encoder.h"
 #include "foc_pi.h"
 #include "math.h"
-void FOC_Loop_Cur_Init(FOC_Loop_Cur_HandleTypeDef *loop_cur, FOC_ENCODER_HandleTypeDef *encoder, FOC_Current_HandleTypeDef *current, FOC_SVPWM_HandleTypeDef *svpwm,float kp_id,float kp_iq,float ki_id,float ki_iq,float voltage_limit)
+void FOC_Loop_Cur_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleTypeDef *encoder, FOC_Current_HandleTypeDef *current, FOC_SVPWM_HandleTypeDef *svpwm,float kp_id,float kp_iq,float ki_id,float ki_iq,float voltage_limit)
 {
     loop_cur->encoder = encoder;
     loop_cur->current = current;
@@ -22,14 +23,14 @@ void FOC_Loop_Cur_Init(FOC_Loop_Cur_HandleTypeDef *loop_cur, FOC_ENCODER_HandleT
 
 }
 //设定参考值函数
-void FOC_Loop_Cur_SetReference(FOC_Loop_Cur_HandleTypeDef *loop_cur, float id_ref, float iq_ref)
+void FOC_Loop_Cur_SetReference(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float id_ref, float iq_ref)
 {
     loop_cur->id_ref = id_ref;
     loop_cur->iq_ref = iq_ref;
 }
 
 // 更新电流环
-void FOC_Loop_Cur_Update(FOC_Loop_Cur_HandleTypeDef *loop_cur,float V_bus)
+void FOC_Loop_Cur_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float V_bus)
 {
     // Update the current loop
     FOC_Clarke_HandleTypeDef clarke_out;
@@ -38,7 +39,7 @@ void FOC_Loop_Cur_Update(FOC_Loop_Cur_HandleTypeDef *loop_cur,float V_bus)
     //更新电流采样
     FOC_Current_Update(loop_cur->current);
     //更新编码器角度
-    FOC_Encoder_Update(loop_cur->encoder);
+    FOC_ENCODER_UpdateAngle(loop_cur->encoder);
     // Perform Clarke transformation
     clarke_out= FOC_Clarke(loop_cur->current->I_a, loop_cur->current->I_b, loop_cur->current->I_c);
     loop_cur->i_alpha = clarke_out.I_alpha;
