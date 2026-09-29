@@ -12,12 +12,12 @@ void FOC_LOOP_POS_Init(FOC_LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_Handle
 }
 void FOC_LOOP_POS_SetPositionRef(FOC_LOOP_POS_HandleTypeDef *loop_pos, float position_ref)
 {
-    loop_pos->position_ref = FOC_Normalize(position_ref);
+    loop_pos->position_ref = FOC_MATH_Normalize(position_ref);
 }
 void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt)
 {
     float error;
-    loop_pos ->position_fbk = loop_pos->encoder->angle_M;
+    loop_pos ->position_fbk = loop_pos->encoder->angle_m;
     //位置误差
     error = loop_pos->position_ref - loop_pos->position_fbk;
     //将误差限制在 [-π, π] 范围内
@@ -27,5 +27,5 @@ void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt)
     error += FOC_TWO_PI;
     //位置PI输出转速目标
     loop_pos->speed_ref = FOC_PI_Update(&loop_pos->pi_pos, error, 0.0f, dt);
-    LOOP_Spd_SetSpeedRef(loop_pos->loop_spd, loop_pos->speed_ref);
+    FOC_LOOP_SPD_SetSpeedRef(loop_pos->loop_spd, loop_pos->speed_ref);
 }

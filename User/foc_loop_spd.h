@@ -14,10 +14,10 @@ typedef struct {
     float iq_ref;
 } FOC_LOOP_SPD_HandleTypeDef;
 
-void FOC_Loop_Spd_Init(FOC_LOOP_SPD_HandleTypeDef *loop_spd,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_CUR_HandleTypeDef *loop_cur,float kp, float ki);
+void FOC_LOOP_SPD_Init(FOC_LOOP_SPD_HandleTypeDef *loop_spd,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_CUR_HandleTypeDef *loop_cur,float kp, float ki);
 
-void LOOP_Spd_SetSpeedRef(FOC_LOOP_SPD_HandleTypeDef *loop_spd, float speed_ref);
+void FOC_LOOP_SPD_SetSpeedRef(FOC_LOOP_SPD_HandleTypeDef *loop_spd, float speed_ref);
 
-void LOOP_Spd_Update(FOC_LOOP_SPD_HandleTypeDef *loop_spd, float dt);
+void FOC_LOOP_SPD_Update(FOC_LOOP_SPD_HandleTypeDef *loop_spd, float dt);
 
 #endif // FOC_LOOP_SPD_H

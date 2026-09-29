@@ -1,5 +1,5 @@
-#ifndef LOOP_POS_H
-#define LOOP_POS_H
+#ifndef FOC_LOOP_POS_H
+#define FOC_LOOP_POS_H
 
 #include "foc_pi.h"
 #include "foc_encoder.h"
@@ -20,4 +20,4 @@ void FOC_LOOP_POS_Init(FOC_LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_Handle
 void FOC_LOOP_POS_SetPositionRef(FOC_LOOP_POS_HandleTypeDef *loop_pos, float position_ref);
 void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt);
 
-#endif // LOOP_POS_H
+#endif // FOC_LOOP_POS_H

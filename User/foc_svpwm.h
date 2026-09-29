@@ -15,7 +15,7 @@ typedef struct
 } FOC_SVPWM_HandleTypeDef;
 
 void FOC_SVPWM_Init(FOC_SVPWM_HandleTypeDef *svpwm, TIM_HandleTypeDef *htim);
-void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float V_alpha, float V_beta, float V_bus);
+void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float v_alpha, float v_beta, float v_bus);
 
 
 #endif // FOC_SVPWM_H

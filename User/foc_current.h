@@ -17,14 +17,14 @@ typedef struct
     uint16_t raw_b;
     uint16_t raw_c;
 
-    float I_a;
-    float I_b;
-    float I_c;
+    float i_a;
+    float i_b;
+    float i_c;
 
 } FOC_CURRENT_HandleTypeDef;
 
-void FOC_Current_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc1, ADC_HandleTypeDef *hadc2);
-void FOC_Current_Update(FOC_CURRENT_HandleTypeDef *current);
+void FOC_CURRENT_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc1, ADC_HandleTypeDef *hadc2);
+void FOC_CURRENT_Update(FOC_CURRENT_HandleTypeDef *current);
 
 #endif // FOC_CURRENT_H
 

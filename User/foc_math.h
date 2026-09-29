@@ -3,26 +3,26 @@
 #include "motor_param.h"
 typedef struct
 {
-    float I_alpha;
-    float I_beta;
-} FOC_Clarke_HandleTypeDef;
+    float i_alpha;
+    float i_beta;
+} FOC_MATH_CLARKE_HandleTypeDef;
 typedef struct
 {
-    float I_d;
-    float I_q;
-} FOC_Park_HandleTypeDef;
+    float i_d;
+    float i_q;
+} FOC_MATH_PARK_HandleTypeDef;
 
 typedef struct
 {
-    float V_alpha;
-    float V_beta;
-} FOC_inv_Park_HandleTypeDef;
+    float v_alpha;
+    float v_beta;
+} FOC_MATH_INV_PARK_HandleTypeDef;
 
-FOC_Clarke_HandleTypeDef FOC_Clarke(float I_a, float I_b, float I_c);
-FOC_Park_HandleTypeDef FOC_Park(float I_alpha, float I_beta, float theta_e);
-FOC_inv_Park_HandleTypeDef FOC_inv_Park(float V_d, float V_q, float theta_e);
+FOC_MATH_CLARKE_HandleTypeDef FOC_MATH_Clarke(float i_a, float i_b, float i_c);
+FOC_MATH_PARK_HandleTypeDef FOC_MATH_Park(float i_alpha, float i_beta, float theta_e);
+FOC_MATH_INV_PARK_HandleTypeDef FOC_MATH_InvPark(float v_d, float v_q, float theta_e);
 
-float FOC_Normalize(float angle);
+float FOC_MATH_Normalize(float angle);
 
 
 #endif // FOC_MATH_H

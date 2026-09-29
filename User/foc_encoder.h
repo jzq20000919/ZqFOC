@@ -8,9 +8,9 @@ typedef struct
     TIM_HandleTypeDef *htim;//编码器接在哪个定时器上
     int32_t spd_last_count;//上一次的计数值
     int32_t count;//当前计数值
-    float angle_M;//机械角度
-    float angle_E;//电角度
-    float angle_E_offset;//电角度零点偏置
+    float angle_m;//机械角度
+    float angle_e;//电角度
+    float angle_e_offset;//电角度零点偏置
     float speed;//rpm
 } FOC_ENCODER_HandleTypeDef;
 
@@ -23,7 +23,7 @@ void FOC_ENCODER_UpdateAngle(FOC_ENCODER_HandleTypeDef *encoder);
 void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt);
 
 //设置电角度零点偏置
-void FOC_ENCODER_Set_E_Offset(FOC_ENCODER_HandleTypeDef *encoder, float offset);
+void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float offset);
 
 
 #endif
