@@ -38,6 +38,7 @@ typedef enum
 {
   FOC_MOTOR_STOPPED = 0,
   FOC_MOTOR_ALIGNING,
+  FOC_MOTOR_ALIGN_RELEASE,
   FOC_MOTOR_RUNNING
 } FOC_MOTOR_State;
 #endif
@@ -67,6 +68,7 @@ FOC_LOOP_CUR_HandleTypeDef loop_cur;
 FOC_LOOP_SPD_HandleTypeDef loop_spd;
 FOC_LOOP_POS_HandleTypeDef loop_pos;
 uint32_t bus_voltage_last_tick;
+static uint8_t current_offset_valid;
 #if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
 static uint32_t diagnostic_telemetry_last_tick;
 #else
@@ -77,6 +79,10 @@ static GPIO_PinState button_stable_level;
 static uint32_t button_last_change_tick;
 #if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_PWM_50
 static uint32_t alignment_start_tick;
+static uint32_t alignment_sample_last_tick;
+static uint32_t alignment_release_start_tick;
+static uint8_t alignment_sample_count;
+static float alignment_angle_samples[ENCODER_ALIGN_SAMPLE_COUNT];
 #endif
 #endif
 /* USER CODE END PV */
@@ -95,21 +101,16 @@ void SystemClock_Config(void);
  */
 static void FOC_MOTOR_Stop(void)
 {
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
-  FOC_MOTOR_State previous_state = motor_state;
-#endif
   motor_state = FOC_MOTOR_STOPPED;
 
   // 先无条件关闭TIM1主输出，避免停机过程仍向三相施加电压。
   __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
 #if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
-  if (previous_state == FOC_MOTOR_RUNNING)
-  {
-    HAL_TIM_Base_Stop_IT(&htim6);
-    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_4);
-    HAL_ADCEx_InjectedStop_IT(&hadc1);
-    HAL_ADCEx_InjectedStop(&hadc2);
-  }
+  // 初始化失败时也可能只启动了部分触发链，停机时全部关闭。
+  HAL_TIM_Base_Stop_IT(&htim6);
+  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_4);
+  HAL_ADCEx_InjectedStop_IT(&hadc1);
+  HAL_ADCEx_InjectedStop(&hadc2);
 #else
   // 诊断模式保留CH4与ADC注入组，使功率输出关闭时仍能测三相电流。
 #endif
@@ -166,6 +167,13 @@ static void FOC_MOTOR_StartPWM50(void)
  */
 static void FOC_MOTOR_BeginAlignment(void)
 {
+  const uint32_t phase_mask = TIM_CCER_CC1E | TIM_CCER_CC1NE |
+                              TIM_CCER_CC2E | TIM_CCER_CC2NE |
+                              TIM_CCER_CC3E | TIM_CCER_CC3NE;
+  if (current_offset_valid == 0U)
+  {
+    return;
+  }
   FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
   if (foc_bus_voltage.voltage <= 0.0f)
   {
@@ -182,59 +190,121 @@ static void FOC_MOTOR_BeginAlignment(void)
 
   FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
   FOC_SVPWM_Start(&foc_svpwm);
+  if ((htim1.Instance->CCER & phase_mask) != phase_mask ||
+      (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
+  {
+    FOC_MOTOR_Stop();
+    return;
+  }
   FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
   alignment_start_tick = HAL_GetTick();
+  alignment_sample_last_tick = alignment_start_tick;
+  alignment_sample_count = 0U;
   motor_state = FOC_MOTOR_ALIGNING;
 }
 
 /**
- * @brief  对齐时间结束后启动电流环；正常模式再启动速度环触发链
+ * @brief  分时采样编码器，撤掉对齐电压并等待释放后启动闭环
  */
 static void FOC_MOTOR_ProcessAlignment(void)
 {
-  if (motor_state != FOC_MOTOR_ALIGNING ||
-      (uint32_t)(HAL_GetTick() - alignment_start_tick) < ENCODER_ALIGN_TIME_MS)
+  uint32_t now = HAL_GetTick();
+
+  if (motor_state == FOC_MOTOR_ALIGN_RELEASE)
   {
-    return;
-  }
+    if (foc_bus_voltage.voltage <= 0.0f ||
+        (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
+    {
+      FOC_MOTOR_Stop();
+      return;
+    }
+    if ((uint32_t)(now - alignment_release_start_tick) < ENCODER_ALIGN_RELEASE_TIME_MS)
+    {
+      return;
+    }
 
-  if (foc_bus_voltage.voltage <= 0.0f)
-  {
-    FOC_MOTOR_Stop();
-    return;
-  }
+    // 转子释放后重新同步角度与测速历史，避免首次速度反馈跳变。
+    FOC_ENCODER_UpdateAngle(&foc_encoder);
+    foc_encoder.spd_last_count = foc_encoder.count;
+    foc_encoder.speed = 0.0f;
+    loop_spd.speed_fbk = 0.0f;
+    FOC_LOOP_SPD_SetSpeedRef(&loop_spd, 0.0f);
+    FOC_LOOP_CUR_SetReference(&loop_cur, 0.0f, 0.0f);
+    FOC_PI_Reset(&loop_cur.pi_id);
+    FOC_PI_Reset(&loop_cur.pi_iq);
+    FOC_PI_Reset(&loop_spd.pi_spd);
+    FOC_PI_Reset(&loop_pos.pi_pos);
+    FOC_LOOP_POS_SetPositionRef(&loop_pos, foc_encoder.angle_m);
+    FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
 
-  FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
-  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
-  FOC_LOOP_SPD_SetSpeedRef(&loop_spd, 0.0f);
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP
-  // 固定电流目标检验三相反馈；速度环和位置环均不参与。
-  FOC_LOOP_CUR_SetReference(&loop_cur, FOC_DIAGNOSTIC_ID_REF_A,
-                            FOC_DIAGNOSTIC_IQ_REF_A);
-#else
-  FOC_LOOP_CUR_SetReference(&loop_cur, 0.0f, 0.0f);
-#endif
-  FOC_PI_Reset(&loop_cur.pi_id);
-  FOC_PI_Reset(&loop_cur.pi_iq);
-  FOC_PI_Reset(&loop_spd.pi_spd);
-  FOC_PI_Reset(&loop_pos.pi_pos);
-  FOC_LOOP_POS_SetPositionRef(&loop_pos, foc_encoder.angle_m);
-
-  // 诊断模式的ADC/CH4已在上电时启动；正常模式在此启动触发链。
-  motor_state = FOC_MOTOR_RUNNING;
 #if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
-  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
-      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
-      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK)
+    // 控制器归零后启动ADC电流环与TIM6；成功后才设置启动速度目标。
+    if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
+        HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
+        HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK ||
+        HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+    {
+      FOC_MOTOR_Stop();
+      return;
+    }
+    if (FOC_VOFA_GetControlMode() == FOC_CONTROL_SPEED)
+    {
+      FOC_LOOP_SPD_SetSpeedRef(&loop_spd, MOTOR_START_SPEED_RPM);
+    }
+#elif FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP
+    // 诊断模式保留原有固定电流目标，速度环与位置环不启动。
+    FOC_LOOP_CUR_SetReference(&loop_cur, FOC_DIAGNOSTIC_ID_REF_A,
+                              FOC_DIAGNOSTIC_IQ_REF_A);
+#endif
+    motor_state = FOC_MOTOR_RUNNING;
+    return;
+  }
+
+  if (motor_state != FOC_MOTOR_ALIGNING)
+  {
+    return;
+  }
+  if (foc_bus_voltage.voltage <= 0.0f ||
+      (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
   {
     FOC_MOTOR_Stop();
     return;
   }
-  if (HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+
+  uint32_t elapsed = (uint32_t)(now - alignment_start_tick);
+  if (elapsed < ENCODER_ALIGN_TIME_MS)
+  {
+    return;
+  }
+  if (elapsed > ENCODER_ALIGN_TIME_MS + ENCODER_ALIGN_SAMPLE_TIMEOUT_MS)
   {
     FOC_MOTOR_Stop();
+    return;
   }
-#endif
+
+  if (alignment_sample_count == 0U ||
+      (uint32_t)(now - alignment_sample_last_tick) >= ENCODER_ALIGN_SAMPLE_INTERVAL_MS)
+  {
+    FOC_ENCODER_UpdateAngle(&foc_encoder);
+    alignment_angle_samples[alignment_sample_count++] = foc_encoder.angle_m;
+    alignment_sample_last_tick = now;
+  }
+  if (alignment_sample_count < ENCODER_ALIGN_SAMPLE_COUNT)
+  {
+    return;
+  }
+
+  if (FOC_ENCODER_CalibrateElectricalOffsetSamples(
+          &foc_encoder, ENCODER_ALIGN_ANGLE,
+          alignment_angle_samples, ENCODER_ALIGN_SAMPLE_COUNT) != HAL_OK)
+  {
+    FOC_MOTOR_Stop();
+    return;
+  }
+  // 对齐电压撤去后等待转子稳定，期间ADC回调不运行电流PI。
+  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
+  alignment_release_start_tick = now;
+  motor_state = FOC_MOTOR_ALIGN_RELEASE;
 }
 
 #endif
@@ -260,6 +330,10 @@ static void FOC_MOTOR_ProcessButton(void)
     {
       if (motor_state == FOC_MOTOR_STOPPED)
       {
+        if (current_offset_valid == 0U)
+        {
+          return;
+        }
 #if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_PWM_50
         FOC_MOTOR_StartPWM50();
 #else
@@ -372,6 +446,29 @@ int main(void)
                     CURRENT_PI_VOLTAGE_LIMIT);
   FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, SPEED_KP, SPEED_KI);
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, POSITION_KP, POSITION_KI);
+
+  // 上电只开启CH4作为注入触发源，三相功率通道保持关闭。
+  CLEAR_BIT(htim1.Instance->CCER,
+            TIM_CCER_CC1E | TIM_CCER_CC1NE |
+            TIM_CCER_CC2E | TIM_CCER_CC2NE |
+            TIM_CCER_CC3E | TIM_CCER_CC3NE);
+  HAL_StatusTypeDef offset_status = HAL_ERROR;
+  if (HAL_ADCEx_InjectedStart(&hadc2) == HAL_OK &&
+      HAL_ADCEx_InjectedStart(&hadc1) == HAL_OK &&
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) == HAL_OK)
+  {
+    offset_status = FOC_CURRENT_CalibrateOffset(&foc_current, &htim1);
+  }
+  HAL_StatusTypeDef tim_stop_status = HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_4);
+  HAL_StatusTypeDef adc1_stop_status = HAL_ADCEx_InjectedStop(&hadc1);
+  HAL_StatusTypeDef adc2_stop_status = HAL_ADCEx_InjectedStop(&hadc2);
+  if (tim_stop_status != HAL_OK || adc1_stop_status != HAL_OK ||
+      adc2_stop_status != HAL_OK)
+  {
+    offset_status = HAL_ERROR;
+  }
+  __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
+  current_offset_valid = (offset_status == HAL_OK) ? 1U : 0U;
 
   // 诊断模式上电即采样；功率输出仍由PD2按键启动。
   if(FOC_VOFA_Init(&huart2, &foc_encoder, &loop_cur, &loop_spd, &loop_pos) != HAL_OK)

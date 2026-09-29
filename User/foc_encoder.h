@@ -52,4 +52,18 @@ void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float o
 void FOC_ENCODER_CalibrateElectricalOffset(
     FOC_ENCODER_HandleTypeDef *encoder,
     float align_angle);
+
+/**
+ * @brief  对多次机械角采样做圆周平均，并设置电角度零点偏置
+ * @param  encoder 编码器句柄
+ * @param  align_angle 对齐磁场的电角度，rad
+ * @param  angle_samples 机械角采样数组，单位rad
+ * @param  sample_count 采样个数
+ * @return HAL_OK 校准成功，HAL_ERROR 采样无效
+ */
+HAL_StatusTypeDef FOC_ENCODER_CalibrateElectricalOffsetSamples(
+    FOC_ENCODER_HandleTypeDef *encoder,
+    float align_angle,
+    const float *angle_samples,
+    uint8_t sample_count);
 #endif

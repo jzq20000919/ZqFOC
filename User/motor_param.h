@@ -14,6 +14,7 @@
 #define MOTOR_RATED_CURRENT         0.5f       // 额定电流，A
 #define MOTOR_MAX_CURRENT           2.0f       // 最大电流，A
 #define MOTOR_MAX_SPEED_RPM         2600.0f    // 最大机械转速，rpm
+#define MOTOR_START_SPEED_RPM       100.0f     // 正常模式按键启动后的目标转速，rpm
 #define MOTOR_INERTIA               3.7e-6f    // 转动惯量，kg·m²
 #define MOTOR_TORQUE_CONSTANT       0.0434f    // 转矩常数，N·m/A
 
@@ -55,6 +56,9 @@
 #define ADC_CURRENT_OFFSET_A        2030.5f    // A相零电流ADC计数
 #define ADC_CURRENT_OFFSET_B        2019.0f    // B相零电流ADC计数
 #define ADC_CURRENT_OFFSET_C        2031.0f    // C相零电流ADC计数
+#define CURRENT_OFFSET_SAMPLE_COUNT 24U        // 上电零电流采样次数
+#define CURRENT_OFFSET_SAMPLE_INTERVAL_MS 2U   // 相邻零点采样间隔，ms
+#define CURRENT_OFFSET_SAMPLE_TIMEOUT_MS 5U    // 单次等待ADC注入转换超时，ms
 #define CURRENT_SCALE \
     (ADC_VREF / (ADC_FULL_SCALE * CURRENT_SHUNT_RESISTANCE * CURRENT_AMP_GAIN)) // 电流换算系数，A/计数
 
@@ -76,4 +80,8 @@
 #define ENCODER_ALIGN_VOLTAGE       1.0f       // 对齐电压，V
 #define ENCODER_ALIGN_TIME_MS       1000U      // 对齐保持时间，ms
 #define ENCODER_ALIGN_ANGLE         0.0f       // 对齐电角度，rad
+#define ENCODER_ALIGN_SAMPLE_COUNT  10U        // 对齐后编码器采样次数
+#define ENCODER_ALIGN_SAMPLE_INTERVAL_MS 2U    // 相邻编码器采样间隔，ms
+#define ENCODER_ALIGN_SAMPLE_TIMEOUT_MS 100U   // 对齐后的采样总超时，ms
+#define ENCODER_ALIGN_RELEASE_TIME_MS 800U     // 撤掉对齐电压后的释放等待，ms
 #endif // MOTOR_PARAM_H

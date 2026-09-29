@@ -15,6 +15,9 @@ typedef struct
     uint16_t raw_b; // B相ADC原始值，计数
     uint16_t raw_c; // 仅兼容旧VOFA诊断通道，不再采样或参与控制，保持为0
 
+    float offset_a; // A相运行时零电流ADC计数
+    float offset_b; // B相运行时零电流ADC计数
+
     float i_a; // A相电流，A
     float i_b; // B相电流，A
     float i_c; // 由A、B相重构的C相电流，A
@@ -33,6 +36,16 @@ void FOC_CURRENT_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc
  * @param  current 电流采样句柄
  */
 void FOC_CURRENT_Update(FOC_CURRENT_HandleTypeDef *current);
+
+/**
+ * @brief  三相功率输出关闭时，按固定间隔采样并校准A、B相电流零点
+ * @param  current 电流采样句柄，注入ADC和TIM1 CH4须已启动
+ * @param  pwm_timer 三相PWM定时器句柄
+ * @return HAL_OK 校准成功，HAL_ERROR或HAL_TIMEOUT 校准失败
+ */
+HAL_StatusTypeDef FOC_CURRENT_CalibrateOffset(
+    FOC_CURRENT_HandleTypeDef *current,
+    TIM_HandleTypeDef *pwm_timer);
 
 #endif // FOC_CURRENT_H
 

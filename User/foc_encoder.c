@@ -5,6 +5,7 @@
 #include "foc_encoder.h"
 #include "motor_param.h"
 #include "foc_math.h"
+#include <math.h>
 void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *htim)
 {
     encoder->htim = htim;
@@ -77,4 +78,40 @@ void FOC_ENCODER_CalibrateElectricalOffset(
     FOC_ENCODER_UpdateAngle(encoder);
     encoder->spd_last_count = encoder->count;
     encoder->speed = 0.0f;
+}
+
+HAL_StatusTypeDef FOC_ENCODER_CalibrateElectricalOffsetSamples(
+    FOC_ENCODER_HandleTypeDef *encoder,
+    float align_angle,
+    const float *angle_samples,
+    uint8_t sample_count)
+{
+    float sum_sin = 0.0f;
+    float sum_cos = 0.0f;
+
+    if (encoder == NULL || angle_samples == NULL || sample_count == 0U)
+    {
+        return HAL_ERROR;
+    }
+
+    // 圆周平均可避免机械角在0/2π处跨界时得到错误的平均值。
+    for (uint8_t i = 0U; i < sample_count; ++i)
+    {
+        if (!isfinite(angle_samples[i]))
+        {
+            return HAL_ERROR;
+        }
+        sum_sin += sinf(angle_samples[i]);
+        sum_cos += cosf(angle_samples[i]);
+    }
+    if (sum_sin * sum_sin + sum_cos * sum_cos < 1.0f)
+    {
+        return HAL_ERROR;
+    }
+
+    float angle_m_avg = FOC_MATH_Normalize(atan2f(sum_sin, sum_cos));
+    float offset = align_angle - angle_m_avg * MOTOR_POLE_PAIRS;
+    FOC_ENCODER_SetElectricalOffset(encoder, offset);
+    FOC_ENCODER_UpdateAngle(encoder);
+    return HAL_OK;
 }
