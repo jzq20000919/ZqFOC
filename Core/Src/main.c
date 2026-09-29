@@ -28,16 +28,19 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "foc_lib.h"
+#include "foc_diagnostic.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+#if !FOC_CURRENT_ZERO_TEST
 typedef enum
 {
   FOC_MOTOR_STOPPED = 0,
   FOC_MOTOR_ALIGNING,
   FOC_MOTOR_RUNNING
 } FOC_MOTOR_State;
+#endif
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -64,12 +67,16 @@ FOC_LOOP_CUR_HandleTypeDef loop_cur;
 FOC_LOOP_SPD_HandleTypeDef loop_spd;
 FOC_LOOP_POS_HandleTypeDef loop_pos;
 uint32_t bus_voltage_last_tick;
+#if FOC_CURRENT_ZERO_TEST
+static uint32_t diagnostic_telemetry_last_tick;
+#else
 static uint32_t idle_telemetry_last_tick;
 static volatile FOC_MOTOR_State motor_state = FOC_MOTOR_STOPPED;
 static GPIO_PinState button_last_level;
 static GPIO_PinState button_stable_level;
 static uint32_t button_last_change_tick;
 static uint32_t alignment_start_tick;
+#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -80,6 +87,7 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#if !FOC_CURRENT_ZERO_TEST
 /**
  * @brief  立即关闭电机输出并清除控制目标
  */
@@ -211,6 +219,7 @@ static void FOC_MOTOR_ProcessButton(void)
     }
   }
 }
+#endif
 
 /* USER CODE END 0 */
 
@@ -254,10 +263,12 @@ int main(void)
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+#if !FOC_CURRENT_ZERO_TEST
   // 记录上电时的按键电平；若一直按住，必须先松开再按才启动。
   button_last_level = HAL_GPIO_ReadPin(FOC_BUTTON_PORT, FOC_BUTTON_PIN);
   button_stable_level = button_last_level;
   button_last_change_tick = HAL_GetTick();
+#endif
 
   // 先校准ADC并启动采样运放，为后续电流采样做准备。
   if(HAL_ADCEx_Calibration_Start(&hadc1,ADC_SINGLE_ENDED) != HAL_OK)
@@ -287,10 +298,12 @@ int main(void)
   
   FOC_CURRENT_Init(&foc_current, &hadc1, &hadc2);
   
-  // 对齐前先取得有效母线电压，否则SVPWM会跳过输出。
+  // 正常模式下对齐前先取得母线电压；实验模式不驱动电机。
   FOC_BUS_VOLTAGE_Init(&foc_bus_voltage, &hadc1);
+#if !FOC_CURRENT_ZERO_TEST
   FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
   bus_voltage_last_tick = HAL_GetTick();
+#endif
   
   FOC_SVPWM_Init(&foc_svpwm, &htim1);
   
@@ -306,13 +319,28 @@ int main(void)
   FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, SPEED_KP, SPEED_KI);
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, POSITION_KP, POSITION_KI);
 
-  // 上电保持PWM、ADC注入组和控制定时器关闭，SW1按下后再对齐并启动。
+  // 实验模式保留串口遥测，但不启动三相功率输出和控制环。
   if(FOC_VOFA_Init(&huart2, &foc_encoder, &loop_cur, &loop_spd, &loop_pos) != HAL_OK)
   {
     Error_Handler();
   }
+#if FOC_CURRENT_ZERO_TEST
+  // 三相输出通道保持关闭；只启动CH4以沿用已验证的ADC注入触发路径。
+  CLEAR_BIT(htim1.Instance->CCER,
+            TIM_CCER_CC1E | TIM_CCER_CC1NE |
+            TIM_CCER_CC2E | TIM_CCER_CC2NE |
+            TIM_CCER_CC3E | TIM_CCER_CC3NE);
+  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
+      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  diagnostic_telemetry_last_tick = HAL_GetTick();
+#else
   foc_encoder.spd_last_count = __HAL_TIM_GET_COUNTER(&htim3);
   idle_telemetry_last_tick = HAL_GetTick();
+#endif
 
   /* USER CODE END 2 */
 
@@ -323,6 +351,27 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+#if FOC_CURRENT_ZERO_TEST
+    // 只计算静止电流反馈，不执行PI或更新PWM。
+    uint32_t now = HAL_GetTick();
+    if ((uint32_t)(now - diagnostic_telemetry_last_tick) >= 10U)
+    {
+      FOC_MATH_CLARKE_HandleTypeDef clarke_out;
+      FOC_MATH_PARK_HandleTypeDef park_out;
+      const volatile FOC_CURRENT_HandleTypeDef *sample = &foc_current;
+      float i_a = sample->i_a;
+      float i_b = sample->i_b;
+      float i_c = sample->i_c;
+      FOC_ENCODER_UpdateAngle(&foc_encoder);
+      clarke_out = FOC_MATH_Clarke(i_a, i_b, i_c);
+      park_out = FOC_MATH_Park(clarke_out.i_alpha, clarke_out.i_beta,
+                               foc_encoder.angle_e);
+      loop_cur.i_d = park_out.i_d;
+      loop_cur.i_q = park_out.i_q;
+      diagnostic_telemetry_last_tick = now;
+      FOC_VOFA_RequestTelemetry();
+    }
+#else
     // 母线电压每10ms采样一次；通信打包和命令解析都在主循环中执行。
     uint32_t now = HAL_GetTick();
     if ((uint32_t)(now - bus_voltage_last_tick) >= 10U)
@@ -345,8 +394,11 @@ int main(void)
         FOC_VOFA_RequestTelemetry();
       }
     }
+#endif
     FOC_VOFA_ProcessTx();
+#if !FOC_CURRENT_ZERO_TEST
     FOC_VOFA_ProcessRx();
+#endif
   }
   /* USER CODE END 3 */
 }
@@ -396,6 +448,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+#if !FOC_CURRENT_ZERO_TEST
 // TIM6每1ms更新速度环；位置模式下每5次更新一次位置环。
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -417,10 +470,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     FOC_LOOP_SPD_Update(&loop_spd, SPEED_LOOP_TS);
   }
 }
-// ADC注入完成后更新16kHz电流环；每4次仅请求一次遥测。
+#endif
+// 实验模式只更新采样值；正常模式更新电流环并分频请求遥测。
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
+#if !FOC_CURRENT_ZERO_TEST
   static uint8_t telemetry_divider = 0U;
+#endif
+#if FOC_CURRENT_ZERO_TEST
+  if (hadc == &hadc1)
+  {
+    FOC_CURRENT_Update(&foc_current);
+  }
+#else
   if(hadc == &hadc1 && motor_state == FOC_MOTOR_RUNNING)
   {
     FOC_LOOP_CUR_Update(&loop_cur,foc_bus_voltage.voltage);
@@ -430,6 +492,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
       FOC_VOFA_RequestTelemetry();
     }
   }
+#endif
 }
 /* USER CODE END 4 */
 

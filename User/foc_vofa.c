@@ -3,6 +3,7 @@
  * @brief   VOFA+遥测发送与命令处理
  */
 #include "foc_vofa.h"
+#include "foc_diagnostic.h"
 #include "motor_param.h"
 
 #include <math.h>
@@ -159,10 +160,20 @@ void FOC_VOFA_ProcessTx(void)
     // 先读取8个状态值，再按JustFloat顺序打包。
     const volatile FOC_LOOP_SPD_HandleTypeDef *spd = vofa_loop_spd;
     const volatile FOC_LOOP_CUR_HandleTypeDef *cur = vofa_loop_cur;
+#if FOC_CURRENT_ZERO_TEST
+    // 零点实验的第4通道为Id，第5～7通道为原始计数，第8通道为Iq。
+    const volatile FOC_CURRENT_HandleTypeDef *current = cur->current;
+    const float values[8] = {
+        spd->speed_ref, spd->speed_fbk, cur->id_ref, cur->i_d,
+        (float)current->raw_a, (float)current->raw_b,
+        (float)current->raw_c, cur->i_q
+    };
+#else
     const float values[8] = {
         spd->speed_ref, spd->speed_fbk, cur->id_ref, cur->i_d,
         cur->iq_ref, cur->i_q, cur->v_d, cur->v_q
     };
+#endif
     for (uint8_t i = 0U; i < 8U; ++i)
     {
         memcpy(&tx_buffer[i * 4U], &values[i], sizeof(float));

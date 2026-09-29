@@ -50,7 +50,9 @@
 #define CURRENT_AMP_GAIN            10.0f      // 电流采样放大倍数
 #define ADC_VREF                    3.3f       // ADC参考电压，V
 #define ADC_FULL_SCALE              4095.0f    // 12位ADC最大计数
-#define ADC_CURRENT_OFFSET          2048.0f    // 电流采样理论零点，ADC计数
+#define ADC_CURRENT_OFFSET_A        2030.5f    // A相零电流ADC计数
+#define ADC_CURRENT_OFFSET_B        2019.0f    // B相零电流ADC计数
+#define ADC_CURRENT_OFFSET_C        2031.0f    // C相零电流ADC计数
 #define CURRENT_SCALE \
     (ADC_VREF / (ADC_FULL_SCALE * CURRENT_SHUNT_RESISTANCE * CURRENT_AMP_GAIN)) // 电流换算系数，A/计数
 
