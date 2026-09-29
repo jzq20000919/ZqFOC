@@ -160,7 +160,7 @@ void FOC_VOFA_ProcessTx(void)
     // 先读取8个状态值，再按JustFloat顺序打包。
     const volatile FOC_LOOP_SPD_HandleTypeDef *spd = vofa_loop_spd;
     const volatile FOC_LOOP_CUR_HandleTypeDef *cur = vofa_loop_cur;
-#if FOC_CURRENT_ZERO_TEST
+#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
     // 零点实验的第4通道为Id，第5～7通道为原始计数，第8通道为Iq。
     const volatile FOC_CURRENT_HandleTypeDef *current = cur->current;
     const float values[8] = {

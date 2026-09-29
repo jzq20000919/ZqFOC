@@ -36,6 +36,7 @@
 #define CURRENT_KP_Q                2.70f      // q轴比例增益
 #define CURRENT_KI_Q                8000.0f    // q轴积分增益
 #define CURRENT_PI_VOLTAGE_LIMIT    24.0f      // PI输出电压限幅，V
+#define FOC_DIAGNOSTIC_IQ_REF_A     0.1f       // 诊断电流环q轴目标电流，A
 
 // 速度环PI参数
 #define SPEED_KP                    0.0008f    // 比例增益
