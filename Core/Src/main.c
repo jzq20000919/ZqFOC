@@ -138,6 +138,7 @@ int main(void)
   
   //初始化母线电压采样
   FOC_BUS_VOLTAGE_Init(&foc_bus_voltage, &hadc1);
+  FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
   bus_voltage_last_tick = HAL_GetTick();
   
   //SVPWM
@@ -158,6 +159,16 @@ int main(void)
   // 初始化位置环
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, POSITION_KP, POSITION_KI);
 
+  //启动三相互补PWM
+  FOC_SVPWM_Start(&foc_svpwm);
+  //施加固定电角度磁场
+  FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
+  HAL_Delay(ENCODER_ALIGN_TIME_MS);
+  //计算电角度偏置
+  FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
+  //停止施加磁场
+  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
+
   //启动ADC注入组转换
   if(HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK)
   {
@@ -172,17 +183,7 @@ int main(void)
   {
     Error_Handler();
   }
-  //启动三相互补PWM
-  FOC_SVPWM_Start(&foc_svpwm);
-  //施加固定电角度磁场
-  FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
-  HAL_Delay(ENCODER_ALIGN_TIME_MS);
-  //计算电角度偏置
-  FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
-  //停止施加磁场
-  FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
-
-
+  
   //启动1khz速度/位置环计时器
   if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
   {
