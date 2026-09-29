@@ -2,7 +2,7 @@
 #include "foc_encoder.h"
 #include "foc_pi.h"
 #include "math.h"
-void FOC_Loop_Cur_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleTypeDef *encoder, FOC_Current_HandleTypeDef *current, FOC_SVPWM_HandleTypeDef *svpwm,float kp_id,float kp_iq,float ki_id,float ki_iq,float voltage_limit)
+void FOC_Loop_Cur_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleTypeDef *encoder, FOC_CURRENT_HandleTypeDef *current, FOC_SVPWM_HandleTypeDef *svpwm,float kp_id,float kp_iq,float ki_id,float ki_iq,float voltage_limit)
 {
     loop_cur->encoder = encoder;
     loop_cur->current = current;

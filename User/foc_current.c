@@ -1,6 +1,6 @@
 #include "stm32g4xx_hal_adc_ex.h"
 #include "foc_current.h"
-void FOC_Current_Init(FOC_Current_HandleTypeDef *current,ADC_HandleTypeDef *hadc1, ADC_HandleTypeDef *hadc2)
+void FOC_Current_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc1, ADC_HandleTypeDef *hadc2)
 {
     current->hadc1 = hadc1;
     current->hadc2 = hadc2;
@@ -14,7 +14,7 @@ void FOC_Current_Init(FOC_Current_HandleTypeDef *current,ADC_HandleTypeDef *hadc
     current->I_c = 0.0f;
 }
 
-void FOC_Current_Update(FOC_Current_HandleTypeDef *current)
+void FOC_Current_Update(FOC_CURRENT_HandleTypeDef *current)
 {
     current-> raw_a = HAL_ADCEx_InjectedGetValue(current->hadc1, ADC_INJECTED_RANK_1);
     current-> raw_b = HAL_ADCEx_InjectedGetValue(current->hadc2, ADC_INJECTED_RANK_1);

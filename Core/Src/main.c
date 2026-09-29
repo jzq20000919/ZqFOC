@@ -25,7 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "foc_lib.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,7 +46,12 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+FOC_ENCODER_HandleTypeDef foc_encoder;
+FOC_CURRENT_HandleTypeDef foc_current;
+FOC_SVPWM_HandleTypeDef foc_svpwm;
+FOC_LOOP_CUR_HandleTypeDef loop_cur;
+FOC_LOOP_SPD_HandleTypeDef loop_spd;
+FOC_LOOP_POS_HandleTypeDef loop_pos;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -96,8 +101,23 @@ int main(void)
   MX_OPAMP3_Init();
   MX_TIM1_Init();
   MX_TIM3_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-
+  //编码器
+  FOC_ENCODER_Init(&foc_encoder, &htim3);
+  //电流采样
+  FOC_CURRENT_Init(&foc_current, &hadc1, &hadc2);
+  //SVPWM
+  FOC_SVPWM_Init(&foc_svpwm, &htim1);
+  //电流环
+  FOC_Loop_Cur_Init(&loop_cur, &foc_encoder, &foc_current, &foc_svpwm, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+  //速度环
+  FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, 0.0f, 0.0f);
+  //位置环
+  FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, 0.0f, 0.0f);
+  //启动1khz调度
+  HAL_TIM_Base_Start_IT(&htim6);
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -157,7 +177,21 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+//速度环和位置环的回调
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  static uint8_t pos_cnt = 0;
+  if(htim == &htim6)
+  {
+    if(++pos_cnt >=5)
+    {
+      pos_cnt = 0;
+      LOOP_POS_Update(&loop_pos,POSITION_LOOP_TS);
+    }
+    LOOP_SPD_Update(&loop_spd,SPEED_LOOP_TS);
 
+  }
+}
 /* USER CODE END 4 */
 
 /**

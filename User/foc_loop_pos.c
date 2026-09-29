@@ -1,7 +1,7 @@
 #include "foc_loop_pos.h"
 #include "foc_math.h"
 #include "motor_param.h"
-void LOOP_POS_Init(LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_SPD_HandleTypeDef *loop_spd,float kp, float ki)
+void FOC_LOOP_POS_Init(FOC_LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_SPD_HandleTypeDef *loop_spd,float kp, float ki)
 {
     FOC_PI_Init(&loop_pos->pi_pos, kp, ki,-MOTOR_MAX_SPEED_RPM, MOTOR_MAX_SPEED_RPM);
     loop_pos->encoder = encoder;
@@ -10,11 +10,11 @@ void LOOP_POS_Init(LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_HandleTypeDef 
     loop_pos->position_fbk = 0.0f;
     loop_pos->speed_ref = 0.0f;
 }
-void LOOP_POS_SetPositionRef(LOOP_POS_HandleTypeDef *loop_pos, float position_ref)
+void FOC_LOOP_POS_SetPositionRef(FOC_LOOP_POS_HandleTypeDef *loop_pos, float position_ref)
 {
     loop_pos->position_ref = FOC_Normalize(position_ref);
 }
-void LOOP_POS_Update(LOOP_POS_HandleTypeDef *loop_pos, float dt)
+void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt)
 {
     float error;
     loop_pos ->position_fbk = loop_pos->encoder->angle_M;

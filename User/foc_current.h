@@ -21,10 +21,10 @@ typedef struct
     float I_b;
     float I_c;
 
-} FOC_Current_HandleTypeDef;
+} FOC_CURRENT_HandleTypeDef;
 
-void FOC_Current_Init(FOC_Current_HandleTypeDef *current,ADC_HandleTypeDef *hadc1, ADC_HandleTypeDef *hadc2);
-void FOC_Current_Update(FOC_Current_HandleTypeDef *current);
+void FOC_Current_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc1, ADC_HandleTypeDef *hadc2);
+void FOC_Current_Update(FOC_CURRENT_HandleTypeDef *current);
 
 #endif // FOC_CURRENT_H
 

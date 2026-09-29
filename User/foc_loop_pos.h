@@ -14,10 +14,10 @@ typedef struct
     float position_ref;
     float position_fbk;
     float speed_ref;
-} LOOP_POS_HandleTypeDef;
+} FOC_LOOP_POS_HandleTypeDef;
 
-void LOOP_POS_Init(LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_SPD_HandleTypeDef *loop_spd,float kp, float ki);
-void LOOP_POS_SetPositionRef(LOOP_POS_HandleTypeDef *loop_pos, float position_ref);
-void LOOP_POS_Update(LOOP_POS_HandleTypeDef *loop_pos, float dt);
+void FOC_LOOP_POS_Init(FOC_LOOP_POS_HandleTypeDef *loop_pos,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_SPD_HandleTypeDef *loop_spd,float kp, float ki);
+void FOC_LOOP_POS_SetPositionRef(FOC_LOOP_POS_HandleTypeDef *loop_pos, float position_ref);
+void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt);
 
 #endif // LOOP_POS_H
