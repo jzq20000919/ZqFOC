@@ -36,6 +36,7 @@
 #define CURRENT_KP_Q                2.70f      // q轴比例增益
 #define CURRENT_KI_Q                8000.0f    // q轴积分增益
 #define CURRENT_PI_VOLTAGE_LIMIT    24.0f      // PI输出电压限幅，V
+#define FOC_DIAGNOSTIC_ID_REF_A     0.0f       // 诊断电流环d轴目标电流，A
 #define FOC_DIAGNOSTIC_IQ_REF_A     0.1f       // 诊断电流环q轴目标电流，A
 
 // 速度环PI参数
@@ -61,8 +62,8 @@
 #define BUS_VOLTAGE_DIVIDER_RATIO   26.0f      // 电阻分压倍率
 
 // SVPWM参数
-#define SVPWM_DUTY_MIN              0.05f      // 最小占空比，0～1
-#define SVPWM_DUTY_MAX              0.95f      // 最大占空比，0～1
+#define SVPWM_DUTY_MIN              0.20f      // 最小占空比，0～1
+#define SVPWM_DUTY_MAX              0.80f      // 最大占空比，0～1
 #define VOLTAGE_UTILIZATION         0.90f      // 母线电压利用系数
 
 // 数学常量

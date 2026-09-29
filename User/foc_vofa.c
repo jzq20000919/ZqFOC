@@ -158,7 +158,10 @@ void FOC_VOFA_ProcessTx(void)
     }
 
     // 先读取8个状态值，再按JustFloat顺序打包。
+#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_CURRENT_LOOP && \
+    FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_PWM_50
     const volatile FOC_LOOP_SPD_HandleTypeDef *spd = vofa_loop_spd;
+#endif
     const volatile FOC_LOOP_CUR_HandleTypeDef *cur = vofa_loop_cur;
 #if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
     // 零点实验的第4通道为Id，第5～7通道为原始计数，第8通道为Iq。
@@ -167,6 +170,38 @@ void FOC_VOFA_ProcessTx(void)
         spd->speed_ref, spd->speed_fbk, cur->id_ref, cur->i_d,
         (float)current->raw_a, (float)current->raw_b,
         (float)current->raw_c, cur->i_q
+    };
+#elif FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP
+    // 短暂屏蔽中断，确保极性对比使用同一次ADC更新的三相电流。
+    const volatile FOC_CURRENT_HandleTypeDef *current = cur->current;
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    float i_q = cur->i_q;
+    float i_a = current->i_a;
+    float i_b = current->i_b;
+    float i_c = current->i_c;
+    __set_PRIMASK(primask);
+    const float values[8] = {
+        i_q, i_a, i_b, i_c,
+        i_a + i_b + i_c, -i_a + i_b + i_c,
+        i_a - i_b + i_c, i_a + i_b - i_c
+    };
+#elif FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_PWM_50
+    // 同一ADC更新内读取三相原始值与换算值，I7用于比较PWM开关前后的电流和。
+    const volatile FOC_CURRENT_HandleTypeDef *current = cur->current;
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    float i_a = current->i_a;
+    float i_b = current->i_b;
+    float i_c = current->i_c;
+    uint16_t raw_a = current->raw_a;
+    uint16_t raw_b = current->raw_b;
+    uint16_t raw_c = current->raw_c;
+    __set_PRIMASK(primask);
+    const float values[8] = {
+        i_a, i_b, i_c, 0.0f,
+        (float)raw_a, (float)raw_b, (float)raw_c,
+        i_a + i_b + i_c
     };
 #else
     const float values[8] = {
