@@ -150,8 +150,6 @@ int main(void)
   FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, 0.0f, 0.0f);
   // 初始化位置环
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, 0.0f, 0.0f);
-  // 启动 1 kHz 定时器中断
-  HAL_TIM_Base_Start_IT(&htim6);
 
   //启动ADC注入组转换
   if(HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK)
@@ -169,11 +167,13 @@ int main(void)
   }
   //启动三相互补PWM
   FOC_SVPWM_Start(&foc_svpwm);
+  
   //启动1khz速度/位置环计时器
   if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
   {
     Error_Handler();
   }
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -259,7 +259,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   if(hadc == &hadc1)
   {
-    FOC_LOOP_CUR_Update(&foc_current,foc_bus_voltage.voltage);
+    FOC_LOOP_CUR_Update(&loop_cur,foc_bus_voltage.voltage);
   }
 }
 /* USER CODE END 4 */
