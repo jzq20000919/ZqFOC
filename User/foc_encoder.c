@@ -61,15 +61,24 @@ void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float o
 {
     encoder->angle_e_offset = FOC_MATH_Normalize(offset);
 }
-void FOC_ENCODER_ResetZero(FOC_ENCODER_HandleTypeDef *encoder)
+
+//校准电角度
+void FOC_ENCODER_CalibrateElectricalOffset(
+    FOC_ENCODER_HandleTypeDef *encoder,
+    float align_angle)
 {
-    __HAL_TIM_SET_COUNTER(encoder->htim, 0);
+    float offset;
+    /* 读取转子对齐后的机械角度 */
+    encoder->count = __HAL_TIM_GET_COUNTER(encoder->htim);
 
-    encoder->count = 0;
-    encoder->spd_last_count = 0;
-
-    encoder->angle_m = 0.0f;
-    encoder->angle_e = 0.0f;
-    encoder->angle_e_offset = 0.0f;
+    encoder->angle_m =
+        (float)encoder->count *
+        FOC_TWO_PI /
+        (float)ENCODER_CPR;
+    offset = align_angle -encoder->angle_m * MOTOR_POLE_PAIRS;
+    FOC_ENCODER_SetElectricalOffset(encoder, offset);
+    /* 更新一次校准后的电角度 */
+    FOC_ENCODER_UpdateAngle(encoder);
+    encoder->spd_last_count = encoder->count;
     encoder->speed = 0.0f;
 }

@@ -68,6 +68,6 @@
 /* Encoder electrical alignment */
 #define ENCODER_ALIGN_VOLTAGE       1.0f
 #define ENCODER_ALIGN_TIME_MS       1000U
-
+#define ENCODER_ALIGN_ANGLE         0.0f
 #endif // MOTOR_PARAM_H
 
