@@ -1,3 +1,7 @@
+/**
+ * @file    foc_loop_pos.c
+ * @brief   FOC位置环实现
+ */
 #include "foc_loop_pos.h"
 #include "foc_math.h"
 #include "motor_param.h"
@@ -18,14 +22,13 @@ void FOC_LOOP_POS_Update(FOC_LOOP_POS_HandleTypeDef *loop_pos, float dt)
 {
     float error;
     loop_pos ->position_fbk = loop_pos->encoder->angle_m;
-    //位置误差
     error = loop_pos->position_ref - loop_pos->position_fbk;
-    //将误差限制在 [-π, π] 范围内
+    // 取单圈内的最短角度误差，避免跨越零点时反向绕行。
     if (error > FOC_PI) 
     error -= FOC_TWO_PI;
     if (error < -FOC_PI) 
     error += FOC_TWO_PI;
-    //位置PI输出转速目标
+    // 位置PI给出转速目标，再由速度环跟踪。
     loop_pos->speed_ref = FOC_PI_Update(&loop_pos->pi_pos, error, 0.0f, dt);
     FOC_LOOP_SPD_SetSpeedRef(loop_pos->loop_spd, loop_pos->speed_ref);
 }

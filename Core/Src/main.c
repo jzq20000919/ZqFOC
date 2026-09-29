@@ -1,8 +1,8 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
+  * @file           main.c
+  * @brief          FOC主程序
   ******************************************************************************
   * @attention
   *
@@ -70,8 +70,8 @@ void SystemClock_Config(void);
 /* USER CODE END 0 */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
+  * @brief  完成外设与FOC初始化，并进入主循环
+  * @return 不返回
   */
 int main(void)
 {
@@ -80,23 +80,23 @@ int main(void)
 
   /* USER CODE END 1 */
 
-  /* MCU Configuration--------------------------------------------------------*/
+  /* MCU配置 ---------------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  /* 初始化HAL、Flash接口与SysTick。 */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
-  /* Configure the system clock */
+  /* 配置系统时钟。 */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */
+  /* 初始化已配置的外设。 */
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
@@ -109,7 +109,7 @@ int main(void)
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  //启动ADC校准
+  // 先校准ADC并启动采样运放，为后续电流采样做准备。
   if(HAL_ADCEx_Calibration_Start(&hadc1,ADC_SINGLE_ENDED) != HAL_OK)
   {
     Error_Handler();
@@ -118,7 +118,6 @@ int main(void)
   {
     Error_Handler();
   }
-  //启动OPAMP
   if(HAL_OPAMP_Start(&hopamp1) != HAL_OK)
   {
     Error_Handler();
@@ -133,21 +132,18 @@ int main(void)
   }
   HAL_Delay(1);
 
-  // 初始化编码器
+  // 初始化传感器、PWM和三个控制环。
   FOC_ENCODER_Init(&foc_encoder, &htim3);
   
-  // 初始化三相电流采样
   FOC_CURRENT_Init(&foc_current, &hadc1, &hadc2);
   
-  //初始化母线电压采样
+  // 对齐前先取得有效母线电压，否则SVPWM会跳过输出。
   FOC_BUS_VOLTAGE_Init(&foc_bus_voltage, &hadc1);
   FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
   bus_voltage_last_tick = HAL_GetTick();
   
-  //SVPWM
   FOC_SVPWM_Init(&foc_svpwm, &htim1);
   
-  // 初始化电流环
   FOC_LOOP_CUR_Init(&loop_cur,
                     &foc_encoder,
                     &foc_current,
@@ -157,22 +153,17 @@ int main(void)
                     CURRENT_KP_Q,
                     CURRENT_KI_Q,
                     CURRENT_PI_VOLTAGE_LIMIT);
-  // 初始化速度环
   FOC_LOOP_SPD_Init(&loop_spd, &foc_encoder, &loop_cur, SPEED_KP, SPEED_KI);
-  // 初始化位置环
   FOC_LOOP_POS_Init(&loop_pos, &foc_encoder, &loop_spd, POSITION_KP, POSITION_KI);
 
-  //启动三相互补PWM
+  // 固定磁场完成电角度对齐；此时尚未启动注入采样，电流环不会改写PWM。
   FOC_SVPWM_Start(&foc_svpwm);
-  //施加固定电角度磁场
   FOC_SVPWM_Update(&foc_svpwm, ENCODER_ALIGN_VOLTAGE, 0.0f, foc_bus_voltage.voltage);
   HAL_Delay(ENCODER_ALIGN_TIME_MS);
-  //计算电角度偏置
   FOC_ENCODER_CalibrateElectricalOffset(&foc_encoder, ENCODER_ALIGN_ANGLE);
-  //停止施加磁场
   FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
 
-  //启动ADC注入组转换
+  // 对齐结束后启动ADC注入组与TIM1 CH4，形成16kHz电流环触发链。
   if(HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK)
   {
     Error_Handler();
@@ -181,7 +172,6 @@ int main(void)
   {
     Error_Handler();
   }
-  //启动定时器4驱动ADC
   if(HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
@@ -192,7 +182,7 @@ int main(void)
     Error_Handler();
   }
   
-  //启动1khz速度/位置环计时器
+  // 最后启动TIM6：速度环1kHz，位置模式下位置环200Hz。
   if(HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
   {
     Error_Handler();
@@ -200,13 +190,14 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  /* Infinite loop */
+  /* 主循环 */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // 母线电压每10ms采样一次；通信打包和命令解析都在主循环中执行。
     uint32_t now = HAL_GetTick();
     if ((uint32_t)(now - bus_voltage_last_tick) >= 10U)
     {
@@ -220,19 +211,18 @@ int main(void)
 }
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
+  * @brief  配置系统时钟
   */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
+  /* 配置内部稳压器输出电压。
   */
   HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
-  /** Initializes the RCC Oscillators according to the specified parameters
+  /* 按设定参数初始化RCC振荡器。
   * in the RCC_OscInitTypeDef structure.
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
@@ -249,7 +239,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
+  /* 配置CPU、AHB和APB总线时钟。
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
@@ -265,7 +255,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-// 速度环和位置环的定时回调
+// TIM6每1ms更新速度环；位置模式下每5次更新一次位置环。
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   static uint8_t pos_cnt = 0;
@@ -286,7 +276,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     FOC_LOOP_SPD_Update(&loop_spd, SPEED_LOOP_TS);
   }
 }
-//ADC注入转换回调
+// ADC注入完成后更新16kHz电流环；每4次仅请求一次遥测。
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
   static uint8_t telemetry_divider = 0U;
@@ -303,13 +293,12 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 /* USER CODE END 4 */
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
+  * @brief  发生初始化错误时停止运行
   */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  /* 初始化失败后禁止中断，并停留在此处。 */
   __disable_irq();
   while (1)
   {
@@ -318,17 +307,14 @@ void Error_Handler(void)
 }
 #ifdef USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
+  * @brief  处理HAL断言失败
+  * @param  file 触发断言的源文件名
+  * @param  line 触发断言的行号
   */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* 可在此处处理断言信息。 */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

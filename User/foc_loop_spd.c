@@ -1,3 +1,7 @@
+/**
+ * @file    foc_loop_spd.c
+ * @brief   FOC速度环实现
+ */
 #include "foc_loop_spd.h"
 
 void FOC_LOOP_SPD_Init(FOC_LOOP_SPD_HandleTypeDef *loop_spd,  FOC_ENCODER_HandleTypeDef *encoder, FOC_LOOP_CUR_HandleTypeDef *loop_cur,float kp, float ki)
@@ -23,6 +27,7 @@ void FOC_LOOP_SPD_Update(FOC_LOOP_SPD_HandleTypeDef *loop_spd, float dt)
 {
     FOC_ENCODER_UpdateSpeed(loop_spd->encoder, dt);
     loop_spd->speed_fbk = loop_spd->encoder->speed;
+    // 速度PI输出q轴电流目标，d轴目标保持为零。
     loop_spd->iq_ref = FOC_PI_Update(&loop_spd->pi_spd, loop_spd->speed_ref, loop_spd->speed_fbk, dt);
     FOC_LOOP_CUR_SetReference(loop_spd->loop_cur, 0.0f, loop_spd->iq_ref);
 }

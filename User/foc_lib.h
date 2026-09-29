@@ -1,3 +1,7 @@
+/**
+ * @file    foc_lib.h
+ * @brief   FOC用户模块公共头文件
+ */
 #ifndef FOC_LIB_H
 #define FOC_LIB_H
 

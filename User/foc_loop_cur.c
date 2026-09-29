@@ -1,3 +1,7 @@
+/**
+ * @file    foc_loop_cur.c
+ * @brief   FOC电流环实现
+ */
 #include "foc_loop_cur.h"
 #include "foc_encoder.h"
 #include "foc_pi.h"
@@ -22,40 +26,35 @@ void FOC_LOOP_CUR_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleT
     FOC_PI_Init(&loop_cur->pi_iq, kp_iq, ki_iq,-voltage_limit,voltage_limit);
 
 }
-//设定参考值函数
 void FOC_LOOP_CUR_SetReference(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float id_ref, float iq_ref)
 {
     loop_cur->id_ref = id_ref;
     loop_cur->iq_ref = iq_ref;
 }
 
-// 更新电流环
 void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float v_bus)
 {
-    // Update the current loop
     FOC_MATH_CLARKE_HandleTypeDef clarke_out;
     FOC_MATH_PARK_HandleTypeDef park_out;
     FOC_MATH_INV_PARK_HandleTypeDef inv_park_out;
-    //更新电流采样
+    // 1. 取得三相电流与当前电角度。
     FOC_CURRENT_Update(loop_cur->current);
-    //更新编码器角度
     FOC_ENCODER_UpdateAngle(loop_cur->encoder);
-    // Perform Clarke transformation
+    // 2. Clarke/Park变换得到d、q轴反馈电流。
     clarke_out= FOC_MATH_Clarke(loop_cur->current->i_a, loop_cur->current->i_b, loop_cur->current->i_c);
     loop_cur->i_alpha = clarke_out.i_alpha;
     loop_cur->i_beta = clarke_out.i_beta;
 
-    // Perform Park transformation
     park_out= FOC_MATH_Park(loop_cur->i_alpha, loop_cur->i_beta, loop_cur->encoder->angle_e);
     loop_cur->i_d = park_out.i_d;
     loop_cur->i_q = park_out.i_q;
 
-    // 电流Id/Iq的PI控制器更新
+    // 3. 电流PI计算d、q轴目标电压。
     loop_cur->v_d = 
     FOC_PI_Update(&loop_cur->pi_id, loop_cur->id_ref,loop_cur->i_d,CURRENT_LOOP_TS);
     loop_cur->v_q = 
     FOC_PI_Update(&loop_cur->pi_iq, loop_cur->iq_ref,loop_cur->i_q,CURRENT_LOOP_TS);
-    //电压矢量限幅
+    // 4. 按当前母线电压限制电压矢量幅值。
     float v_limit;
     float v_mag;
     v_limit = VOLTAGE_UTILIZATION * v_bus * FOC_INV_SQRT3;
@@ -67,12 +66,11 @@ void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float v_bus)
         loop_cur->v_d *= scale;
         loop_cur->v_q *= scale;
     }
-    // 逆Park变换
+    // 5. 逆Park变换并更新三相SVPWM。
     inv_park_out= FOC_MATH_InvPark(loop_cur->v_d, loop_cur->v_q, loop_cur->encoder->angle_e);
     loop_cur->v_alpha = inv_park_out.v_alpha;
     loop_cur->v_beta = inv_park_out.v_beta;
 
-    //SVPWM更新
     FOC_SVPWM_Update(loop_cur->svpwm, loop_cur->v_alpha, loop_cur->v_beta, v_bus);
 
 }

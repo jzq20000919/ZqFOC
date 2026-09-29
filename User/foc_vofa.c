@@ -1,3 +1,7 @@
+/**
+ * @file    foc_vofa.c
+ * @brief   VOFA+遥测发送与命令处理
+ */
 #include "foc_vofa.h"
 #include "motor_param.h"
 
@@ -5,8 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define VOFA_TX_FRAME_SIZE   36U
-#define VOFA_COMMAND_SIZE    32U
+#define VOFA_TX_FRAME_SIZE   36U // 8个float及JustFloat帧尾，总字节数
+#define VOFA_COMMAND_SIZE    32U // 单条ASCII命令缓冲区长度，字节
 
 static UART_HandleTypeDef *vofa_uart;
 static FOC_ENCODER_HandleTypeDef *vofa_encoder;
@@ -24,6 +28,9 @@ static char command_buffer[VOFA_COMMAND_SIZE];
 static volatile uint8_t command_ready = 0U;
 static uint8_t command_length;
 
+/**
+ * @brief  切换到速度模式并清除旧目标与PI积分
+ */
 static void FOC_VOFA_SwitchToSpeed(void)
 {
     NVIC_DisableIRQ(TIM6_DAC_IRQn);
@@ -35,6 +42,9 @@ static void FOC_VOFA_SwitchToSpeed(void)
     NVIC_EnableIRQ(TIM6_DAC_IRQn);
 }
 
+/**
+ * @brief  以当前位置为目标切换到位置模式
+ */
 static void FOC_VOFA_SwitchToPosition(void)
 {
     if (control_mode == FOC_CONTROL_POSITION)
@@ -53,6 +63,10 @@ static void FOC_VOFA_SwitchToPosition(void)
     NVIC_EnableIRQ(TIM6_DAC_IRQn);
 }
 
+/**
+ * @brief  解析一条已完成的ASCII控制命令
+ * @param  command 以空字符结尾的命令字符串
+ */
 static void FOC_VOFA_ExecuteCommand(const char *command)
 {
     float value;
@@ -131,6 +145,7 @@ void FOC_VOFA_RequestTelemetry(void)
 
 void FOC_VOFA_ProcessTx(void)
 {
+    // 电流环中断只置请求标志，帧打包与DMA发送留在主循环。
     if (telemetry_pending == 0U)
     {
         return;
@@ -138,9 +153,10 @@ void FOC_VOFA_ProcessTx(void)
     telemetry_pending = 0U;
     if (tx_busy != 0U)
     {
-        return; /* DMA 忙时丢弃本帧。 */
+        return; // DMA忙时丢弃本帧，避免等待影响FOC。
     }
 
+    // 先读取8个状态值，再按JustFloat顺序打包。
     const volatile FOC_LOOP_SPD_HandleTypeDef *spd = vofa_loop_spd;
     const volatile FOC_LOOP_CUR_HandleTypeDef *cur = vofa_loop_cur;
     const float values[8] = {
@@ -151,6 +167,7 @@ void FOC_VOFA_ProcessTx(void)
     {
         memcpy(&tx_buffer[i * 4U], &values[i], sizeof(float));
     }
+    // JustFloat帧尾：00 00 80 7F。
     tx_buffer[32] = 0x00U;
     tx_buffer[33] = 0x00U;
     tx_buffer[34] = 0x80U;
@@ -177,6 +194,7 @@ void FOC_VOFA_ProcessRx(void)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
 {
+    // UART中断只收集字符，完整命令交给主循环解析。
     if (uart != vofa_uart)
     {
         return;
@@ -231,6 +249,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
 {
     if (uart == vofa_uart)
     {
+        // 释放发送标志，允许主循环提交下一帧DMA。
         tx_busy = 0U;
     }
 }

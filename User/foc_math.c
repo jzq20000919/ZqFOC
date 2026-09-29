@@ -1,10 +1,15 @@
+/**
+ * @file    foc_math.c
+ * @brief   FOC坐标变换实现
+ */
 #include "foc_math.h"
 #include <math.h>
 #include "motor_param.h"
 
 FOC_MATH_CLARKE_HandleTypeDef FOC_MATH_Clarke(float i_a, float i_b, float i_c)
 {
-    (void)i_c; // Unused parameter
+    // 当前Clarke公式由A、B相计算，保留C相接口参数。
+    (void)i_c;
     FOC_MATH_CLARKE_HandleTypeDef clarke_output;
     clarke_output.i_alpha = i_a;
     clarke_output.i_beta = (i_a + 2.0f * i_b) * FOC_INV_SQRT3;
