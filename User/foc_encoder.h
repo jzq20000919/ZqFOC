@@ -25,5 +25,5 @@ void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt);
 //设置电角度零点偏置
 void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float offset);
 
-
+void FOC_ENCODER_ResetZero(FOC_ENCODER_HandleTypeDef *encoder);
 #endif

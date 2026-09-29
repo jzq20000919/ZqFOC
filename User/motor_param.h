@@ -65,5 +65,9 @@
 #define FOC_INV_SQRT3               0.5773502691896258f
 #define FOC_SQRT3                   1.7320508075688772f
 
+/* Encoder electrical alignment */
+#define ENCODER_ALIGN_VOLTAGE       1.0f
+#define ENCODER_ALIGN_TIME_MS       1000U
+
 #endif // MOTOR_PARAM_H
 

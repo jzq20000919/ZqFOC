@@ -1,4 +1,6 @@
 {
+    "files.encoding": "utf8",
+    "files.autoGuessEncoding": false,
     "cmake.cmakePath": "cube-cmake",
     "cmake.configureArgs": [
         "-DCMAKE_COMMAND=cube-cmake"

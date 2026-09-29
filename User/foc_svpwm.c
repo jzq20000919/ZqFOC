@@ -53,7 +53,7 @@ void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float v_alpha, float v_b
     if(svpwm->duty_w > SVPWM_DUTY_MAX) svpwm->duty_w = SVPWM_DUTY_MAX;
     if(svpwm->duty_w < SVPWM_DUTY_MIN) svpwm->duty_w = SVPWM_DUTY_MIN;
 
-    //占空�?-CCR
+    //占空比-CCR
     arr = __HAL_TIM_GET_AUTORELOAD(svpwm->htim);
     __HAL_TIM_SET_COMPARE(svpwm->htim, TIM_CHANNEL_1, (uint32_t)(svpwm->duty_u * arr));
     __HAL_TIM_SET_COMPARE(svpwm->htim, TIM_CHANNEL_2, (uint32_t)(svpwm->duty_v * arr));

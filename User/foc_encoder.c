@@ -61,3 +61,15 @@ void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float o
 {
     encoder->angle_e_offset = FOC_MATH_Normalize(offset);
 }
+void FOC_ENCODER_ResetZero(FOC_ENCODER_HandleTypeDef *encoder)
+{
+    __HAL_TIM_SET_COUNTER(encoder->htim, 0);
+
+    encoder->count = 0;
+    encoder->spd_last_count = 0;
+
+    encoder->angle_m = 0.0f;
+    encoder->angle_e = 0.0f;
+    encoder->angle_e_offset = 0.0f;
+    encoder->speed = 0.0f;
+}

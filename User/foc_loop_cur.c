@@ -22,14 +22,14 @@ void FOC_LOOP_CUR_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleT
     FOC_PI_Init(&loop_cur->pi_iq, kp_iq, ki_iq,-voltage_limit,voltage_limit);
 
 }
-//设定参考值函�?
+//设定参考值函数
 void FOC_LOOP_CUR_SetReference(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float id_ref, float iq_ref)
 {
     loop_cur->id_ref = id_ref;
     loop_cur->iq_ref = iq_ref;
 }
 
-// 更新电流�?
+// 更新电流环
 void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float v_bus)
 {
     // Update the current loop
@@ -38,7 +38,7 @@ void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float v_bus)
     FOC_MATH_INV_PARK_HandleTypeDef inv_park_out;
     //更新电流采样
     FOC_CURRENT_Update(loop_cur->current);
-    //更新编码器角�?
+    //更新编码器角度
     FOC_ENCODER_UpdateAngle(loop_cur->encoder);
     // Perform Clarke transformation
     clarke_out= FOC_MATH_Clarke(loop_cur->current->i_a, loop_cur->current->i_b, loop_cur->current->i_c);
@@ -50,7 +50,7 @@ void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur,float v_bus)
     loop_cur->i_d = park_out.i_d;
     loop_cur->i_q = park_out.i_q;
 
-    // 电流Id/Iq的PI控制器更�?
+    // 电流Id/Iq的PI控制器更新
     loop_cur->v_d = 
     FOC_PI_Update(&loop_cur->pi_id, loop_cur->id_ref,loop_cur->i_d,CURRENT_LOOP_TS);
     loop_cur->v_q = 
