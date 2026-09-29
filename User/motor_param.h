@@ -12,10 +12,11 @@
 #define MOTOR_MAX_SPEED_RPM     2600.0f
 /* ================= Control ================= */
 #define PWM_FREQUENCY_HZ        16000.0f
-#define CURRENT_LOOP_TS         (1.0f / PWM_FREQUENCY_HZ)
-#define SPEED_LOOP_TS           (1.0f / PWM_FREQUENCY_HZ)
+#define CURRENT_LOOP_FREQUENCY  PWM_FREQUENCY_HZ
 #define SPEED_LOOP_FREQUENCY    1000.0f
 #define POSITION_LOOP_FREQUENCY 200.0f
+#define CURRENT_LOOP_TS         (1.0f / CURRENT_LOOP_FREQUENCY)
+#define SPEED_LOOP_TS           (1.0f / SPEED_LOOP_FREQUENCY)
 #define POSITION_LOOP_TS        (1.0f / POSITION_LOOP_FREQUENCY)
 /* ================= Math ================= */
 
