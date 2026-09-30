@@ -11,7 +11,6 @@ void FOC_CURRENT_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc
 
     current->raw_a = 0;
     current->raw_b = 0;
-    current->raw_c = 0;
     current->offset_a = ADC_CURRENT_OFFSET_A;
     current->offset_b = ADC_CURRENT_OFFSET_B;
 

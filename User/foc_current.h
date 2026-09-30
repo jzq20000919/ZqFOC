@@ -13,7 +13,6 @@ typedef struct
 
     uint16_t raw_a; // A相ADC原始值，计数
     uint16_t raw_b; // B相ADC原始值，计数
-    uint16_t raw_c; // 仅兼容旧VOFA诊断通道，不再采样或参与控制，保持为0
 
     float offset_a; // A相运行时零电流ADC计数
     float offset_b; // B相运行时零电流ADC计数

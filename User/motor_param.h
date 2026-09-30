@@ -15,6 +15,7 @@
 #define MOTOR_MAX_CURRENT           2.0f       // 最大电流，A
 #define MOTOR_MAX_SPEED_RPM         2600.0f    // 最大机械转速，rpm
 #define MOTOR_START_SPEED_RPM       100.0f     // 正常模式按键启动后的目标转速，rpm
+#define MOTOR_SPEED_BUTTON_STEP_RPM 100.0f     // SW2/SW3每次按下调节的转速，rpm
 #define MOTOR_INERTIA               3.7e-6f    // 转动惯量，kg·m²
 #define MOTOR_TORQUE_CONSTANT       0.0434f    // 转矩常数，N·m/A
 
@@ -37,8 +38,6 @@
 #define CURRENT_KP_Q                2.70f      // q轴比例增益
 #define CURRENT_KI_Q                8000.0f    // q轴积分增益
 #define CURRENT_PI_VOLTAGE_LIMIT    24.0f      // PI输出电压限幅，V
-#define FOC_DIAGNOSTIC_ID_REF_A     0.0f       // 诊断电流环d轴目标电流，A
-#define FOC_DIAGNOSTIC_IQ_REF_A     0.1f       // 诊断电流环q轴目标电流，A
 
 // 速度环PI参数
 #define SPEED_KP                    0.0008f    // 比例增益

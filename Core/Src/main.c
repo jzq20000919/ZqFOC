@@ -28,12 +28,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "foc_lib.h"
-#include "foc_diagnostic.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_ZERO_CURRENT
 typedef enum
 {
   FOC_MOTOR_STOPPED = 0,
@@ -41,7 +39,12 @@ typedef enum
   FOC_MOTOR_ALIGN_RELEASE,
   FOC_MOTOR_RUNNING
 } FOC_MOTOR_State;
-#endif
+typedef struct
+{
+  GPIO_PinState last_level;
+  GPIO_PinState stable_level;
+  uint32_t last_change_tick;
+} FOC_SPEED_BUTTON_State;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -49,6 +52,10 @@ typedef enum
 #define FOC_BUTTON_PORT        GPIOD
 #define FOC_BUTTON_PIN         GPIO_PIN_2
 #define FOC_BUTTON_DEBOUNCE_MS 30U
+#define FOC_SPEED_UP_PORT      GPIOB
+#define FOC_SPEED_UP_PIN       GPIO_PIN_6
+#define FOC_SPEED_DOWN_PORT    GPIOC
+#define FOC_SPEED_DOWN_PIN     GPIO_PIN_9
 #define FOC_IDLE_TELEMETRY_PERIOD_MS 10U
 /* USER CODE END PD */
 
@@ -69,22 +76,18 @@ FOC_LOOP_SPD_HandleTypeDef loop_spd;
 FOC_LOOP_POS_HandleTypeDef loop_pos;
 uint32_t bus_voltage_last_tick;
 static uint8_t current_offset_valid;
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
-static uint32_t diagnostic_telemetry_last_tick;
-#else
 static uint32_t idle_telemetry_last_tick;
 static volatile FOC_MOTOR_State motor_state = FOC_MOTOR_STOPPED;
 static GPIO_PinState button_last_level;
 static GPIO_PinState button_stable_level;
 static uint32_t button_last_change_tick;
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_PWM_50
+static FOC_SPEED_BUTTON_State speed_up_button;
+static FOC_SPEED_BUTTON_State speed_down_button;
 static uint32_t alignment_start_tick;
 static uint32_t alignment_sample_last_tick;
 static uint32_t alignment_release_start_tick;
 static uint8_t alignment_sample_count;
 static float alignment_angle_samples[ENCODER_ALIGN_SAMPLE_COUNT];
-#endif
-#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -95,7 +98,6 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_ZERO_CURRENT
 /**
  * @brief  立即关闭电机输出并清除控制目标
  */
@@ -105,31 +107,17 @@ static void FOC_MOTOR_Stop(void)
 
   // 先无条件关闭TIM1主输出，避免停机过程仍向三相施加电压。
   __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
   // 初始化失败时也可能只启动了部分触发链，停机时全部关闭。
   HAL_TIM_Base_Stop_IT(&htim6);
   HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_4);
   HAL_ADCEx_InjectedStop_IT(&hadc1);
   HAL_ADCEx_InjectedStop(&hadc2);
-#else
-  // 诊断模式保留CH4与ADC注入组，使功率输出关闭时仍能测三相电流。
-#endif
   HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
   HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
   HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
   HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
   HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP || \
-    FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_PWM_50
-  // 三相通道已关闭，仅重新允许CH4内部触发继续驱动ADC注入采样。
-  CLEAR_BIT(htim1.Instance->CCER,
-            TIM_CCER_CC1E | TIM_CCER_CC1NE |
-            TIM_CCER_CC2E | TIM_CCER_CC2NE |
-            TIM_CCER_CC3E | TIM_CCER_CC3NE);
-  __HAL_TIM_MOE_ENABLE(&htim1);
-#endif
-
   FOC_LOOP_SPD_SetSpeedRef(&loop_spd, 0.0f);
   FOC_LOOP_CUR_SetReference(&loop_cur, 0.0f, 0.0f);
   FOC_PI_Reset(&loop_cur.pi_id);
@@ -143,25 +131,6 @@ static void FOC_MOTOR_Stop(void)
   FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
 }
 
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_PWM_50
-/**
- * @brief  三相功率输出固定为50%，只检验PWM开启后的ADC采样
- */
-static void FOC_MOTOR_StartPWM50(void)
-{
-  // 先装载相同的比较值，再打开互补PWM，避免使能瞬间输出旧占空比。
-  uint32_t half_period = __HAL_TIM_GET_AUTORELOAD(&htim1) / 2U;
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, half_period);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, half_period);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, half_period);
-  // CH4已使TIM1运行；一次性使能三相及互补输出，避免逐相启动的瞬时线电压。
-  SET_BIT(htim1.Instance->CCER,
-          TIM_CCER_CC1E | TIM_CCER_CC1NE |
-          TIM_CCER_CC2E | TIM_CCER_CC2NE |
-          TIM_CCER_CC3E | TIM_CCER_CC3NE);
-  motor_state = FOC_MOTOR_RUNNING;
-}
-#else
 /**
  * @brief  开始电角度对齐，控制中断仍保持关闭
  */
@@ -237,7 +206,6 @@ static void FOC_MOTOR_ProcessAlignment(void)
     FOC_LOOP_POS_SetPositionRef(&loop_pos, foc_encoder.angle_m);
     FOC_SVPWM_Update(&foc_svpwm, 0.0f, 0.0f, foc_bus_voltage.voltage);
 
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
     // 控制器归零后启动ADC电流环与TIM6；成功后才设置启动速度目标。
     if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
         HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
@@ -251,11 +219,6 @@ static void FOC_MOTOR_ProcessAlignment(void)
     {
       FOC_LOOP_SPD_SetSpeedRef(&loop_spd, MOTOR_START_SPEED_RPM);
     }
-#elif FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP
-    // 诊断模式保留原有固定电流目标，速度环与位置环不启动。
-    FOC_LOOP_CUR_SetReference(&loop_cur, FOC_DIAGNOSTIC_ID_REF_A,
-                              FOC_DIAGNOSTIC_IQ_REF_A);
-#endif
     motor_state = FOC_MOTOR_RUNNING;
     return;
   }
@@ -307,8 +270,6 @@ static void FOC_MOTOR_ProcessAlignment(void)
   motor_state = FOC_MOTOR_ALIGN_RELEASE;
 }
 
-#endif
-
 /**
  * @brief  轮询SW1并在稳定按下沿切换启停
  */
@@ -334,11 +295,7 @@ static void FOC_MOTOR_ProcessButton(void)
         {
           return;
         }
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_PWM_50
-        FOC_MOTOR_StartPWM50();
-#else
         FOC_MOTOR_BeginAlignment();
-#endif
       }
       else
       {
@@ -347,7 +304,63 @@ static void FOC_MOTOR_ProcessButton(void)
     }
   }
 }
-#endif
+/**
+ * @brief  检测调速按键经过消抖后的按下沿
+ */
+static uint8_t FOC_MOTOR_SpeedButtonPressed(GPIO_TypeDef *port, uint16_t pin,
+                                             FOC_SPEED_BUTTON_State *button,
+                                             uint32_t now)
+{
+  GPIO_PinState level = HAL_GPIO_ReadPin(port, pin);
+
+  if (level != button->last_level)
+  {
+    button->last_level = level;
+    button->last_change_tick = now;
+  }
+  if (level != button->stable_level &&
+      (uint32_t)(now - button->last_change_tick) >= FOC_BUTTON_DEBOUNCE_MS)
+  {
+    button->stable_level = level;
+    return (level == GPIO_PIN_SET) ? 1U : 0U;
+  }
+  return 0U;
+}
+
+/**
+ * @brief  SW2/SW3按当前方向增减目标转速，每次按下只调整一次
+ */
+static void FOC_MOTOR_ProcessSpeedButtons(void)
+{
+  uint32_t now = HAL_GetTick();
+  uint8_t speed_up = FOC_MOTOR_SpeedButtonPressed(
+      FOC_SPEED_UP_PORT, FOC_SPEED_UP_PIN, &speed_up_button, now);
+  uint8_t speed_down = FOC_MOTOR_SpeedButtonPressed(
+      FOC_SPEED_DOWN_PORT, FOC_SPEED_DOWN_PIN, &speed_down_button, now);
+
+  if (motor_state != FOC_MOTOR_RUNNING ||
+      FOC_VOFA_GetControlMode() != FOC_CONTROL_SPEED ||
+      speed_up == speed_down)
+  {
+    return;
+  }
+
+  float speed_ref = loop_spd.speed_ref;
+  float speed_magnitude = (speed_ref < 0.0f) ? -speed_ref : speed_ref;
+  if (speed_up != 0U)
+  {
+    speed_magnitude += MOTOR_SPEED_BUTTON_STEP_RPM;
+  }
+  else
+  {
+    // 减速最低到零，避免一次按压跨过零速而突然反转。
+    speed_magnitude = (speed_magnitude > MOTOR_SPEED_BUTTON_STEP_RPM)
+                          ? speed_magnitude - MOTOR_SPEED_BUTTON_STEP_RPM
+                          : 0.0f;
+  }
+  FOC_LOOP_SPD_SetSpeedRef(&loop_spd,
+                           (speed_ref < 0.0f) ? -speed_magnitude : speed_magnitude);
+}
 
 /* USER CODE END 0 */
 
@@ -391,12 +404,16 @@ int main(void)
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_ZERO_CURRENT
   // 记录上电时的按键电平；若一直按住，必须先松开再按才启动。
   button_last_level = HAL_GPIO_ReadPin(FOC_BUTTON_PORT, FOC_BUTTON_PIN);
   button_stable_level = button_last_level;
   button_last_change_tick = HAL_GetTick();
-#endif
+  speed_up_button.last_level = HAL_GPIO_ReadPin(FOC_SPEED_UP_PORT, FOC_SPEED_UP_PIN);
+  speed_up_button.stable_level = speed_up_button.last_level;
+  speed_up_button.last_change_tick = button_last_change_tick;
+  speed_down_button.last_level = HAL_GPIO_ReadPin(FOC_SPEED_DOWN_PORT, FOC_SPEED_DOWN_PIN);
+  speed_down_button.stable_level = speed_down_button.last_level;
+  speed_down_button.last_change_tick = button_last_change_tick;
 
   // 先校准ADC并启动采样运放，为后续电流采样做准备。
   if(HAL_ADCEx_Calibration_Start(&hadc1,ADC_SINGLE_ENDED) != HAL_OK)
@@ -426,12 +443,10 @@ int main(void)
   
   FOC_CURRENT_Init(&foc_current, &hadc1, &hadc2);
   
-  // 电流环实验与正常模式都需要先取得母线电压。
+  // 对齐和闭环控制前先取得母线电压。
   FOC_BUS_VOLTAGE_Init(&foc_bus_voltage, &hadc1);
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_ZERO_CURRENT
   FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
   bus_voltage_last_tick = HAL_GetTick();
-#endif
   
   FOC_SVPWM_Init(&foc_svpwm, &htim1);
   
@@ -470,33 +485,13 @@ int main(void)
   __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
   current_offset_valid = (offset_status == HAL_OK) ? 1U : 0U;
 
-  // 诊断模式上电即采样；功率输出仍由PD2按键启动。
+  // 上电启动VOFA通信；功率输出仍由PD2按键启动。
   if(FOC_VOFA_Init(&huart2, &foc_encoder, &loop_cur, &loop_spd, &loop_pos) != HAL_OK)
   {
     Error_Handler();
   }
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_NORMAL
-  // 三相输出通道保持关闭；只启动CH4以沿用已验证的ADC注入触发路径。
-  CLEAR_BIT(htim1.Instance->CCER,
-            TIM_CCER_CC1E | TIM_CCER_CC1NE |
-            TIM_CCER_CC2E | TIM_CCER_CC2NE |
-            TIM_CCER_CC3E | TIM_CCER_CC3NE);
-  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
-      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
-      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
-  diagnostic_telemetry_last_tick = HAL_GetTick();
-#else
   foc_encoder.spd_last_count = __HAL_TIM_GET_COUNTER(&htim3);
   idle_telemetry_last_tick = HAL_GetTick();
-#endif
-#else
-  foc_encoder.spd_last_count = __HAL_TIM_GET_COUNTER(&htim3);
-  idle_telemetry_last_tick = HAL_GetTick();
-#endif
 
   /* USER CODE END 2 */
 
@@ -507,27 +502,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
-    // 只计算静止电流反馈，不执行PI或更新PWM。
-    uint32_t now = HAL_GetTick();
-    if ((uint32_t)(now - diagnostic_telemetry_last_tick) >= 10U)
-    {
-      FOC_MATH_CLARKE_HandleTypeDef clarke_out;
-      FOC_MATH_PARK_HandleTypeDef park_out;
-      const volatile FOC_CURRENT_HandleTypeDef *sample = &foc_current;
-      float i_a = sample->i_a;
-      float i_b = sample->i_b;
-      float i_c = sample->i_c;
-      FOC_ENCODER_UpdateAngle(&foc_encoder);
-      clarke_out = FOC_MATH_Clarke(i_a, i_b, i_c);
-      park_out = FOC_MATH_Park(clarke_out.i_alpha, clarke_out.i_beta,
-                               foc_encoder.angle_e);
-      loop_cur.i_d = park_out.i_d;
-      loop_cur.i_q = park_out.i_q;
-      diagnostic_telemetry_last_tick = now;
-      FOC_VOFA_RequestTelemetry();
-    }
-#else
     // 母线电压每10ms采样一次；通信打包和命令解析都在主循环中执行。
     uint32_t now = HAL_GetTick();
     if ((uint32_t)(now - bus_voltage_last_tick) >= 10U)
@@ -536,36 +510,21 @@ int main(void)
       FOC_BUS_VOLTAGE_Update(&foc_bus_voltage);
     }
     FOC_MOTOR_ProcessButton();
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_PWM_50
+    FOC_MOTOR_ProcessSpeedButtons();
     FOC_MOTOR_ProcessAlignment();
-#endif
     now = HAL_GetTick();
     uint32_t elapsed_ms = (uint32_t)(now - idle_telemetry_last_tick);
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP
-    if (elapsed_ms >= FOC_IDLE_TELEMETRY_PERIOD_MS)
-#else
     if (motor_state != FOC_MOTOR_RUNNING &&
         elapsed_ms >= FOC_IDLE_TELEMETRY_PERIOD_MS)
-#endif
     {
       idle_telemetry_last_tick = now;
       FOC_ENCODER_UpdateSpeed(&foc_encoder, (float)elapsed_ms * 0.001f);
       loop_spd.speed_fbk = foc_encoder.speed;
-      // 正常停机时由主循环请求遥测；诊断模式主要由ADC回调请求。
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_CURRENT_LOOP
+      // 停机时由主循环请求遥测；运行时由ADC回调分频请求。
       FOC_VOFA_RequestTelemetry();
-#else
-      if (motor_state != FOC_MOTOR_RUNNING)
-      {
-        FOC_VOFA_RequestTelemetry();
-      }
-#endif
     }
-#endif
     FOC_VOFA_ProcessTx();
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
     FOC_VOFA_ProcessRx();
-#endif
   }
   /* USER CODE END 3 */
 }
@@ -615,7 +574,6 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_NORMAL
 // TIM6每1ms更新速度环；位置模式下每5次更新一次位置环。
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -637,46 +595,23 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     FOC_LOOP_SPD_Update(&loop_spd, SPEED_LOOP_TS);
   }
 }
-#endif
-// 诊断模式持续采样；固定50%实验不执行PI，采样完成后分频请求遥测。
+// ADC注入转换完成后运行16kHz电流环，每4次请求一次遥测。
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-#if FOC_DIAGNOSTIC_MODE != FOC_DIAGNOSTIC_ZERO_CURRENT
   static uint8_t telemetry_divider = 0U;
-#endif
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_ZERO_CURRENT
-  if (hadc == &hadc1)
-  {
-    FOC_CURRENT_Update(&foc_current);
-  }
-#else
   if(hadc == &hadc1)
   {
-#if FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_CURRENT_LOOP
-    if (motor_state == FOC_MOTOR_RUNNING)
-    {
-      FOC_LOOP_CUR_Update(&loop_cur, foc_bus_voltage.voltage);
-    }
-    else
-    {
-      FOC_CURRENT_Update(&foc_current);
-    }
-#elif FOC_DIAGNOSTIC_MODE == FOC_DIAGNOSTIC_PWM_50
-    FOC_CURRENT_Update(&foc_current);
-#else
     if (motor_state != FOC_MOTOR_RUNNING)
     {
       return;
     }
     FOC_LOOP_CUR_Update(&loop_cur, foc_bus_voltage.voltage);
-#endif
     if(++telemetry_divider >= 4U)
     {
       telemetry_divider = 0U;
       FOC_VOFA_RequestTelemetry();
     }
   }
-#endif
 }
 /* USER CODE END 4 */
 
