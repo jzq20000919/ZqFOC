@@ -60,18 +60,12 @@ void FOC_ENCODER_SetElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder, float o
     encoder->angle_e_offset = FOC_MATH_Normalize(offset);
 }
 
-void FOC_ENCODER_CalibrateElectricalOffset(
-    FOC_ENCODER_HandleTypeDef *encoder,
-    float align_angle)
+void FOC_ENCODER_CalibrateElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder,float align_angle)
 {
     float offset;
     // 以固定磁场对齐后的转子位置计算电角度零点。
     encoder->count = __HAL_TIM_GET_COUNTER(encoder->htim);
-
-    encoder->angle_m =
-        (float)encoder->count *
-        FOC_TWO_PI /
-        (float)ENCODER_CPR;
+    encoder->angle_m =(float)encoder->count *FOC_TWO_PI /(float)ENCODER_CPR;
     offset = align_angle -encoder->angle_m * MOTOR_POLE_PAIRS;
     FOC_ENCODER_SetElectricalOffset(encoder, offset);
     // 同步角度与测速历史，避免首次速度更新出现计数跳变。

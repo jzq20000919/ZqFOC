@@ -62,7 +62,6 @@ HAL_StatusTypeDef FOC_CURRENT_CalibrateOffset(
                 return HAL_TIMEOUT;
             }
         }
-
         current->raw_a = (uint16_t)HAL_ADCEx_InjectedGetValue(
             current->hadc1, ADC_INJECTED_RANK_1);
         current->raw_b = (uint16_t)HAL_ADCEx_InjectedGetValue(

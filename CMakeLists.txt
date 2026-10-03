@@ -32,7 +32,8 @@ message("Build type: " ${CMAKE_BUILD_TYPE})
 enable_language(C ASM)
 
 # Create an executable object type
-add_executable(${CMAKE_PROJECT_NAME})
+add_executable(${CMAKE_PROJECT_NAME}
+    User/foc_manager.c)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
@@ -55,6 +56,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/foc_loop_spd.c
     User/foc_loop_pos.c
     User/foc_vofa.c
+    User/foc_key.c
 )
 
 # Add include paths

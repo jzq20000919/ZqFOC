@@ -19,4 +19,5 @@
 #include "foc_loop_pos.h"
 #include "foc_vofa.h"
 
+
 #endif // FOC_LIB_H

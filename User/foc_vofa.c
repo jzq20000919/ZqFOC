@@ -9,18 +9,15 @@
 #include <string.h>
 #define VOFA_TX_FRAME_SIZE   36U // 8个float及JustFloat帧尾，总字节数
 #define VOFA_COMMAND_SIZE    32U // 单条ASCII命令缓冲区长度，字节
-
 static UART_HandleTypeDef *vofa_uart;
 static FOC_ENCODER_HandleTypeDef *vofa_encoder;
 static FOC_LOOP_CUR_HandleTypeDef *vofa_loop_cur;
 static FOC_LOOP_SPD_HandleTypeDef *vofa_loop_spd;
 static FOC_LOOP_POS_HandleTypeDef *vofa_loop_pos;
-
 static volatile FOC_CONTROL_MODE control_mode = FOC_CONTROL_SPEED;
 static volatile uint8_t telemetry_pending;
 static volatile uint8_t tx_busy;
 static uint8_t tx_buffer[VOFA_TX_FRAME_SIZE];
-
 static uint8_t rx_byte;
 static char command_buffer[VOFA_COMMAND_SIZE];
 static volatile uint8_t command_ready = 0U;
