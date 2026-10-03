@@ -1,6 +1,6 @@
 /**
  * @file    foc_key.c
- * @brief   FOC启停与调速按键初始化、消抖及轮询处理
+ * @brief   FOC启停、调速及反转按键初始化、消抖及轮询处理
  */
 #include "foc_key.h"
 #include "foc_manager.h"
@@ -83,7 +83,7 @@ static uint8_t FOC_KEY_SpeedButtonPressed(GPIO_TypeDef *port, uint16_t pin,
 }
 
 /**
- * @brief  SW2/SW3按当前方向增减目标转速，每次按下只调整一次
+ * @brief  SW2增加、SW3减少带符号的目标转速，正值正转、负值反转
  */
 static void FOC_KEY_ProcessSpeedButtons(void)
 {
@@ -99,20 +99,16 @@ static void FOC_KEY_ProcessSpeedButtons(void)
   }
 
   float speed_ref = foc_motor.loop_spd.speed_ref;
-  float speed_magnitude = (speed_ref < 0.0f) ? -speed_ref : speed_ref;
   if (speed_up != 0U)
   {
-    speed_magnitude += MOTOR_SPEED_BUTTON_STEP_RPM;
+    speed_ref += MOTOR_SPEED_BUTTON_STEP_RPM;
   }
   else
   {
-    // 减速最低到零，避免一次按压跨过零速而突然反转。
-    speed_magnitude = (speed_magnitude > MOTOR_SPEED_BUTTON_STEP_RPM)
-                          ? speed_magnitude - MOTOR_SPEED_BUTTON_STEP_RPM
-                          : 0.0f;
+    speed_ref -= MOTOR_SPEED_BUTTON_STEP_RPM;
   }
-  FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd,
-                           (speed_ref < 0.0f) ? -speed_magnitude : speed_magnitude);
+  // 允许跨越零速切换方向，由速度环接口统一限制正负最大转速。
+  FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, speed_ref);
 }
 
 /**
