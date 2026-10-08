@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "name": "ESP-IDF",
+      "compilerPath": "C:/Espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc.exe",
+      "compileCommands": "${workspaceFolder}/hello_world/build/compile_commands.json",
+      "intelliSenseMode": "windows-gcc-x86",
+      "cStandard": "c23",
+      "cppStandard": "c++23",
+      "includePath": [
+        "${workspaceFolder}/hello_world/main",
+        "${workspaceFolder}/hello_world/main/bsp",
+        "${workspaceFolder}/hello_world/main/ui",
+        "${workspaceFolder}/hello_world/build/config",
+        "${workspaceFolder}/hello_world/managed_components/lvgl__lvgl",
+        "${workspaceFolder}/hello_world/managed_components/espressif__esp_lvgl_port/include",
+        "C:/esp/v6.0.2/esp-idf/components/esp_common/include"
+      ]
+    }
+  ],
+  "version": 4
+}

@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}/hello_world",
+    "env": {
+      "IDF_PATH": "C:/esp/v6.0.2/esp-idf",
+      "IDF_TOOLS_PATH": "C:/Espressif/tools",
+      "IDF_PYTHON_ENV_PATH": "C:/Espressif/tools/python/v6.0.2/venv",
+      "IDF_TARGET": "esp32s3",
+      "ESP_IDF_VERSION": "6.0.2",
+      "IDF_CCACHE_ENABLE": "1",
+      "ESP_ROM_ELF_DIR": "C:/Espressif/tools/esp-rom-elfs/20241011",
+      "IDF_COMPONENT_LOCAL_STORAGE_URL": "file://C:/Espressif/tools",
+      "PYTHONIOENCODING": "utf-8",
+      "PATH": "C:/Espressif/tools/python/v6.0.2/venv/Scripts;C:/Espressif/tools/cmake/4.0.3/bin;C:/Espressif/tools/ccache/4.12.1/ccache-4.12.1-windows-x86_64;C:/Espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin;C:/Espressif/tools/esp32ulp-elf/2.38_20240113/esp32ulp-elf/bin;C:/Qt/Tools/Ninja;${env:PATH}"
+    }
+  },
+  "tasks": [
+    {
+      "label": "ESP-HMI: Build",
+      "type": "process",
+      "command": "C:/Espressif/tools/python/v6.0.2/venv/Scripts/python.exe",
+      "args": ["C:/esp/v6.0.2/esp-idf/tools/idf.py", "build"],
+      "problemMatcher": "$gcc",
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "ESP-HMI: Reconfigure IntelliSense",
+      "type": "process",
+      "command": "C:/Espressif/tools/python/v6.0.2/venv/Scripts/python.exe",
+      "args": ["C:/esp/v6.0.2/esp-idf/tools/idf.py", "reconfigure"],
+      "problemMatcher": "$gcc"
+    }
+  ]
+}

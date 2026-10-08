@@ -1,0 +1,19 @@
+{
+    "files.autoGuessEncoding": false,
+    "files.encoding": "utf8",
+    "idf.currentSetup": "C:\\esp\\v6.0.2\\esp-idf",
+    "cmake.sourceDirectory": "${workspaceFolder}/hello_world",
+    "cmake.buildDirectory": "${workspaceFolder}/hello_world/build",
+    "cmake.configureOnOpen": false,
+    "cmake.configureOnEdit": false,
+    "cmake.automaticReconfigure": false,
+    "idf.buildPath": "${workspaceFolder}/hello_world/build",
+    "C_Cpp.intelliSenseEngine": "default",
+    "stm32cube-ide-clangd.enable": false,
+    "clangd.path": "C:/Espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd.exe",
+    "clangd.arguments": [
+        "--background-index",
+        "--query-driver=C:/Espressif/tools/xtensa-esp-elf/**/bin/xtensa-esp32s3-elf-gcc.exe",
+        "--compile-commands-dir=${workspaceFolder}/hello_world/build"
+    ]
+}
