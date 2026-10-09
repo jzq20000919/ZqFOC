@@ -2,14 +2,11 @@
 #include <stdbool.h>   // 提供bool类型
 #include "esp_twai.h"          // TWAI通用驱动接口
 #include "esp_twai_onchip.h"   // ESP32片上TWAI控制器接口
-
 #define CAN_TX_GPIO GPIO_NUM_5   // TWAI发送引脚
 #define CAN_RX_GPIO GPIO_NUM_6   // TWAI接收引脚
-
 static twai_node_handle_t can_node = NULL;   // 保存TWAI控制器句柄
 static uint8_t can_tx_data[CAN_FRAME_DLC] = {0};   // 8字节发送缓冲区
 static bool can_tx_pending = false;               // 上一帧是否尚未完成发送
-
 static twai_frame_t can_tx_frame = {
     .header.id = CAN_ID_CMD,         // CAN ID为0x100
     .header.dlc = CAN_FRAME_DLC,     // 数据长度为8字节
@@ -28,9 +25,7 @@ void comm_can_pack_command(CAN_Command_t cmd, uint16_t param, uint8_t data[CAN_F
     data[CAN_PARAM_L_INDEX] = (uint8_t)(param & 0xFFU); // Byte1：参数低8位,0xFFU是为了取出低8位
     data[CAN_PARAM_H_INDEX] = (uint8_t)(param >> 8);    // Byte2：参数高8位
 }
-
 /* ==================== CAN控制器初始化 ==================== */
-
 esp_err_t comm_can_init(void)
 {
     if (can_node != NULL) return ESP_OK;   // 避免重复初始化

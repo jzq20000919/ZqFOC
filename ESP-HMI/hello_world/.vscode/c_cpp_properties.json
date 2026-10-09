@@ -3,12 +3,13 @@
     {
       "name": "ESP-IDF",
       "compilerPath": "C:/Espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc.exe",
-      "compileCommands": "e:\\ZqFOC\\ESP-HMI\\hello_world\\build\\compile_commands.json",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
       "intelliSenseMode": "windows-gcc-x86",
       "cStandard": "c23",
       "cppStandard": "c++23",
       "includePath": [
-        "${workspaceFolder}/**"
+        "${workspaceFolder}/**",
+        "C:/esp/v6.0.2/esp-idf/components/esp_driver_twai/include"
       ],
       "browse": {
         "path": [

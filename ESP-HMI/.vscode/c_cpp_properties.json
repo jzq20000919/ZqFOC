@@ -11,10 +11,12 @@
         "${workspaceFolder}/hello_world/main",
         "${workspaceFolder}/hello_world/main/bsp",
         "${workspaceFolder}/hello_world/main/ui",
+        "${workspaceFolder}/hello_world/main/comm",
         "${workspaceFolder}/hello_world/build/config",
         "${workspaceFolder}/hello_world/managed_components/lvgl__lvgl",
         "${workspaceFolder}/hello_world/managed_components/espressif__esp_lvgl_port/include",
-        "C:/esp/v6.0.2/esp-idf/components/esp_common/include"
+        "C:/esp/v6.0.2/esp-idf/components/esp_common/include",
+        "C:/esp/v6.0.2/esp-idf/components/esp_driver_twai/include"
       ]
     }
   ],

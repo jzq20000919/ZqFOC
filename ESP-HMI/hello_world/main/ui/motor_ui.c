@@ -30,16 +30,42 @@ static void UI_SpeedSliderEvent(lv_event_t *event)
     lv_label_set_text_fmt(target_value_label, "%ld rpm", (long)target_speed_rpm);   // 更新顶部目标速度
     lv_label_set_text_fmt(target_speed_label, "Target: %ld rpm", (long)target_speed_rpm);   // 更新信息区目标速度
 }
+/* ==================== 速度滑块CAN发送事件 ==================== */
+static void UI_SpeedSliderSendEvent(lv_event_t *event)
+{
+    (void)event;   // 不使用事件参数
+
+    esp_err_t ret = comm_can_send_command(CAN_CMD_SET_SPEED, (uint16_t)(int16_t)target_speed_rpm);   // 发送目标速度
+
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("MOTOR_UI", "Set speed failed: %s", esp_err_to_name(ret));   // 输出发送错误
+    }
+}
 /* ==================== START按钮事件 ==================== */
 static void UI_StartButtonEvent(lv_event_t *event)
 {
-    (void)event;   // 暂时不使用事件参数
-    esp_err_t ret = comm_can_send_command(CAN_CMD_START, 0);   // 发送启动命令
+    (void)event;   // 不使用事件参数
+
+    esp_err_t ret = comm_can_send_command(CAN_CMD_SET_MODE, CAN_MODE_SPEED);   // 1.设置速度模式
     if (ret != ESP_OK)
     {
-        ESP_LOGE("MOTOR_UI", "START command failed: %s", esp_err_to_name(ret));   // 记录发送错误
+        ESP_LOGE("MOTOR_UI", "Set mode failed: %s", esp_err_to_name(ret));
+        return;   // 发送失败则不继续启动
+    }
+    ret = comm_can_send_command(CAN_CMD_SET_SPEED, (uint16_t)(int16_t)target_speed_rpm);   //2.设置目标速度
+    if (ret != ESP_OK)
+    { 
+        ESP_LOGE("MOTOR_UI", "Set speed failed: %s", esp_err_to_name(ret));
+        return;   // 发送失败则不继续启动
+    }
+    ret = comm_can_send_command(CAN_CMD_START, 0);   // 3.发送启动命令
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("MOTOR_UI", "START failed: %s", esp_err_to_name(ret));
     }
 }
+
 /* ==================== STOP按钮事件 ==================== */
 static void UI_StopButtonEvent(lv_event_t *event)
 {
@@ -50,9 +76,6 @@ static void UI_StopButtonEvent(lv_event_t *event)
         ESP_LOGE("MOTOR_UI", "STOP command failed: %s", esp_err_to_name(ret));   // 记录发送错误
     }
 }
-
-
-
 
 
 /* ==================== 速度控制页面函数 ==================== */
@@ -94,7 +117,6 @@ static void UI_Create_SpeedScreen(void)//配置页面对象属性
     lv_obj_set_style_text_color(target_value_label, lv_color_hex(0x2196F3), 0);   // 设置数值文字颜色属性
 
 /* ==================== 速度滑块 ==================== */
-
 speed_slider = lv_slider_create(target_speed_card);   // 创建速度滑块
 lv_obj_set_size(speed_slider, 286, 12);                   // 设置滑块大小
 lv_obj_set_pos(speed_slider, 4, 31);                      // 放在卡片下方
@@ -104,8 +126,9 @@ lv_obj_set_style_bg_color(speed_slider, lv_color_hex(0x24384A), LV_PART_MAIN);  
 lv_obj_set_style_bg_color(speed_slider, lv_color_hex(0x2196F3), LV_PART_INDICATOR);     // 已选中的滑轨颜色
 lv_obj_set_style_bg_color(speed_slider, lv_color_hex(0x2196F3), LV_PART_KNOB);          // 滑块圆点颜色
 lv_obj_add_event_cb(speed_slider, UI_SpeedSliderEvent, LV_EVENT_VALUE_CHANGED, NULL);   // 绑定滑块数值变化事件
-/* ==================== START按钮 ==================== */
+lv_obj_add_event_cb(speed_slider, UI_SpeedSliderSendEvent, LV_EVENT_RELEASED, NULL);   // 松开滑块时发送CAN命令
 
+/* ==================== START按钮 ==================== */
 lv_obj_t *start_button = lv_button_create(speed_screen);   // 创建START按钮
 lv_obj_set_size(start_button, 150, 34);                    // 设置按钮大小
 lv_obj_set_pos(start_button, 6, 96);                       // 设置按钮位置
