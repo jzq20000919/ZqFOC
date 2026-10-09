@@ -73,6 +73,12 @@ static bool IRAM_ATTR can_rx_callback(const twai_node_handle_t handle, const twa
 }
 //也就是说twai_frame_t的buffer是一个指针变量，将其指向了我们创建的缓冲区数组。然后调用twai_node_receive_from_isr将接收到的数据传入rx_frame的buffer指针指向的message.data数组中。再然后将报文id和数据长度赋值给message的id和长度成员。先让 rx_frame.buffer 指向 message.data，接收函数通过这个指针写入数据，并填充 rx_frame.header；我们再把 ID 和长度复制给 message，最后把完整的 message 放入队列。
 
+/* ==================== CAN报文队列读取 ==================== */
+bool comm_can_receive(CAN_RxMessage_t *message)
+{
+    if (can_rx_queue == NULL || message == NULL) return false;   // 检查队列及参数
+    return xQueueReceive(can_rx_queue, message, 0) == pdTRUE;   // 从队列取出一条报文
+}
 
 /* ==================== CAN控制器初始化 ==================== */
 esp_err_t comm_can_init(void)
@@ -97,10 +103,13 @@ esp_err_t comm_can_init(void)
         can_node = NULL;              // 清空句柄
         return ESP_ERR_NO_MEM;       // 返回内存不足错误码
     }
+
+
+    /*注册CAN接收回调*/ 
     twai_event_callbacks_t callbacks = {
     .on_rx_done = can_rx_callback   // 收到CAN报文时执行回调
     };
-    ret = twai_node_register_event_callback(can_node, &callbacks);   // 注册CAN接收回调
+    ret = twai_node_register_event_callback(can_node, &callbacks, NULL);
     if (ret != ESP_OK)
     {
         vQueueDelete(can_rx_queue);   // 删除接收队列
@@ -109,7 +118,8 @@ esp_err_t comm_can_init(void)
         can_node = NULL;                // 清空句柄
         return ret;                     // 返回错误码
     }
-    ret = twai_node_enable(can_node);   // 启动TWAI控制器
+    /*启动TWAI控制器*/ 
+    ret = twai_node_enable(can_node);   // 
     if (ret != ESP_OK)
     {
         vQueueDelete(can_rx_queue);   // 删除接收队列
