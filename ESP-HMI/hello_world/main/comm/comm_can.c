@@ -2,9 +2,12 @@
 #include <stdbool.h>   // 提供bool类型
 #include "esp_twai.h"          // TWAI通用驱动接口
 #include "esp_twai_onchip.h"   // ESP32片上TWAI控制器接口
+#include "freertos/FreeRTOS.h"   // FreeRTOS基础接口
+#include "freertos/queue.h"      // FreeRTOS队列接口
 #define CAN_TX_GPIO GPIO_NUM_5   // TWAI发送引脚
 #define CAN_RX_GPIO GPIO_NUM_6   // TWAI接收引脚
 static twai_node_handle_t can_node = NULL;   // 保存TWAI控制器句柄
+static QueueHandle_t can_rx_queue = NULL;   // 使用队列保存接收到的CAN报文
 static uint8_t can_tx_data[CAN_FRAME_DLC] = {0};   // 8字节发送缓冲区
 static bool can_tx_pending = false;               // 上一帧是否尚未完成发送
 static twai_frame_t can_tx_frame = {
@@ -41,15 +44,24 @@ esp_err_t comm_can_init(void)
     };
     esp_err_t ret = twai_new_node_onchip(&node_config, &can_node);   // 创建TWAI节点
     if (ret != ESP_OK) return ret;                                  // 创建失败则返回
+    can_rx_queue = xQueueCreate(16, sizeof(CAN_RxMessage_t));   // 创建接收队列，最多保存16帧
+    if (can_rx_queue == NULL)
+    {
+        twai_node_delete(can_node);   // 创建接收队列失败则释放资源
+        can_node = NULL;              // 清空句柄
+        return ESP_ERR_NO_MEM;       // 返回内存不足错误码
+    }
     ret = twai_node_enable(can_node);   // 启动TWAI控制器
     if (ret != ESP_OK)
     {
+        vQueueDelete(can_rx_queue);   // 删除接收队列
+        can_rx_queue = NULL;          // 清空接收队列句柄
         twai_node_delete(can_node);     // 启动失败则释放资源
         can_node = NULL;                // 清空句柄
         return ret;                     // 返回错误码
     }
     return ESP_OK;   // 初始化成功
-}
+}//1.配置CAN结构体。2.创建TWAI节点和接收队列
 
 /* ==================== CAN控制命令发送 ==================== */
 esp_err_t comm_can_send_command(CAN_Command_t cmd, uint16_t param)

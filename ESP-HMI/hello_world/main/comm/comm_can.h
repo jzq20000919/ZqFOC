@@ -9,4 +9,12 @@ esp_err_t comm_can_init(void);   // 初始化CAN控制器
 /* 将控制命令及参数打包成8字节CAN数据 */
 void comm_can_pack_command(CAN_Command_t cmd, uint16_t param, uint8_t data[CAN_FRAME_DLC]);
 esp_err_t comm_can_send_command(CAN_Command_t cmd, uint16_t param);   // 发送CAN控制命令
+
+typedef struct
+{
+    uint32_t id;   // 接收CAN报文ID
+    uint8_t d_length;   // 接收CAN报文数据长度
+    uint8_t data[CAN_FRAME_DLC];   // 接收CAN报文数据
+} CAN_RxMessage_t;
+
 #endif /* COMM_CAN_H */
