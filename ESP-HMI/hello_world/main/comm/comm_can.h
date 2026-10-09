@@ -16,5 +16,5 @@ typedef struct
     uint8_t d_length;   // 接收CAN报文数据长度
     uint8_t data[CAN_FRAME_DLC];   // 接收CAN报文数据
 } CAN_RxMessage_t;
-
+//can发来一条CAN报文，我们就可以将其ID,数据长度和8字节内容放入结构体
 #endif /* COMM_CAN_H */
