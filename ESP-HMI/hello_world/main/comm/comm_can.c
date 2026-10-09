@@ -4,10 +4,11 @@
 #include "esp_twai_onchip.h"   // ESP32片上TWAI控制器接口
 #include "freertos/FreeRTOS.h"   // FreeRTOS基础接口
 #include "freertos/queue.h"      // FreeRTOS队列接口
+#include "esp_attr.h"
 #define CAN_TX_GPIO GPIO_NUM_5   // TWAI发送引脚
 #define CAN_RX_GPIO GPIO_NUM_6   // TWAI接收引脚
 static twai_node_handle_t can_node = NULL;   // 保存TWAI控制器句柄
-static QueueHandle_t can_rx_queue = NULL;   // 使用队列保存接收到的CAN报文
+static QueueHandle_t can_rx_queue = NULL;   // 创建队列，使用队列保存接收到的CAN报文
 static uint8_t can_tx_data[CAN_FRAME_DLC] = {0};   // 8字节发送缓冲区
 static bool can_tx_pending = false;               // 上一帧是否尚未完成发送
 static twai_frame_t can_tx_frame = {
@@ -28,6 +29,31 @@ void comm_can_pack_command(CAN_Command_t cmd, uint16_t param, uint8_t data[CAN_F
     data[CAN_PARAM_L_INDEX] = (uint8_t)(param & 0xFFU); // Byte1：参数低8位,0xFFU是为了取出低8位
     data[CAN_PARAM_H_INDEX] = (uint8_t)(param >> 8);    // Byte2：参数高8位
 }
+/* ==================== CAN接收回调 ==================== */
+static void IRAM_ATTR can_rx_callback(const twai_node_handle_t handle, const twai_rx_done_event_data_t *edata, void *user_ctx)
+{
+    (void)edata;       // 暂时不使用事件数据
+    (void)user_ctx;    // 暂时不使用用户参数
+    BaseType_t task_woken = pdFALSE;   // 记录是否需要唤醒其他任务
+    CAN_RxMessage_t message = {0};     // 创建一条接收消息
+    twai_frame_t rx_frame = {
+        .buffer = message.data,        // 接收的数据保存到message.data
+        .buffer_len = sizeof(message.data)   // 接收缓冲区大小
+    };
+    if (twai_node_receive_from_isr(handle, &rx_frame) == ESP_OK)
+    {
+        message.id = rx_frame.header.id;       // 保存CAN报文ID
+        message.d_length = rx_frame.header.dlc;     // 保存数据长度
+
+        if (can_rx_queue != NULL)
+        {
+            xQueueSendFromISR(can_rx_queue, &message, &task_woken);   // 将消息复制到队列
+        }
+    }
+
+    return task_woken == pdTRUE;   // 告诉系统是否需要切换任务
+}
+
 /* ==================== CAN控制器初始化 ==================== */
 esp_err_t comm_can_init(void)
 {
@@ -50,6 +76,18 @@ esp_err_t comm_can_init(void)
         twai_node_delete(can_node);   // 创建接收队列失败则释放资源
         can_node = NULL;              // 清空句柄
         return ESP_ERR_NO_MEM;       // 返回内存不足错误码
+    }
+    twai_event_callbacks_t callbacks = {
+    .on_rx_done = comm_can_rx_callback   // 收到CAN报文时执行回调
+    };
+    ret = twai_node_register_event_callback(can_node, &callbacks);   // 注册CAN接收回调
+    if (ret != ESP_OK)
+    {
+        vQueueDelete(can_rx_queue);   // 删除接收队列
+        can_rx_queue = NULL;          // 清空接收队列句柄
+        twai_node_delete(can_node);     // 启动失败则释放资源
+        can_node = NULL;                // 清空句柄
+        return ret;                     // 返回错误码
     }
     ret = twai_node_enable(can_node);   // 启动TWAI控制器
     if (ret != ESP_OK)
