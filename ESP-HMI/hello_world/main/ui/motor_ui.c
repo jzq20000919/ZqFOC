@@ -256,9 +256,6 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
         }
     }
 }
-
-
-
 void motor_ui_create(lv_display_t *display)
 {
     if (display == NULL) return;   // 防止传入无效显示器
