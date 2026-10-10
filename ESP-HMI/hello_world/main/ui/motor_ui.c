@@ -10,6 +10,8 @@
 #define UI_COLOR_DIM     0x8FA9BD   // 次要文字颜色
 #define UI_COLOR_GREEN   0x32E875   // 在线状态颜色
 #define UI_COLOR_RED  0xF04452   // STOP按钮颜色
+#define UI_CAN_TIMEOUT_MS 1000U   // 连续1秒没有有效反馈即离线，后续可按反馈周期调整
+#define UI_CAN_RX_MAX_PER_TICK 16U   // 每50ms最多处理16帧，避免持续接收占用LVGL
 /* ==================== 页面对象 ==================== */
 static lv_obj_t *speed_screen = NULL;   // 创建一个页面对象
 /* ==================== 动态UI对象 ==================== */
@@ -22,7 +24,9 @@ static lv_obj_t *iq_info_label = NULL;             // Iq信息
 static lv_obj_t *id_info_label = NULL;             // Id信息
 static lv_obj_t *motor_state_label = NULL;   // 电机运行状态显示
 /* ==================== UI状态 ==================== */
-static int32_t target_speed_rpm = 500;         // 当前目标速度
+static int32_t target_speed_rpm = 0;         // 上电默认0 rpm，滑块和文字使用同一个初值
+static uint32_t can_last_rx_tick = 0;        // 最后一次解析有效报文的LVGL毫秒计数
+static bool can_online = false;             // 未收到有效报文前保持离线
 
 /* ==================== 速度滑块事件 ==================== */
 static void UI_SpeedSliderEvent(lv_event_t *event)
@@ -41,7 +45,7 @@ static void UI_SpeedSliderSendEvent(lv_event_t *event)
 
     if (ret != ESP_OK)
     {
-        ESP_LOGE("MOTOR_UI", "Set speed failed: %s", esp_err_to_name(ret));   // 输出发送错误
+        ESP_LOGE("MOTOR_UI", "Set speed request failed: %s", esp_err_to_name(ret));   // 仅表示发送请求未提交成功
     }
 }
 /* ==================== START按钮事件 ==================== */
@@ -52,19 +56,19 @@ static void UI_StartButtonEvent(lv_event_t *event)
     esp_err_t ret = comm_can_send_command(CAN_CMD_SET_MODE, CAN_MODE_SPEED);   // 1.设置速度模式
     if (ret != ESP_OK)
     {
-        ESP_LOGE("MOTOR_UI", "Set mode failed: %s", esp_err_to_name(ret));
+        ESP_LOGE("MOTOR_UI", "Set mode request failed: %s", esp_err_to_name(ret));
         return;   // 发送失败则不继续启动
     }
     ret = comm_can_send_command(CAN_CMD_SET_SPEED, (uint16_t)(int16_t)target_speed_rpm);   //2.设置目标速度
     if (ret != ESP_OK)
     { 
-        ESP_LOGE("MOTOR_UI", "Set speed failed: %s", esp_err_to_name(ret));
+        ESP_LOGE("MOTOR_UI", "Set speed request failed: %s", esp_err_to_name(ret));
         return;   // 发送失败则不继续启动
     }
     ret = comm_can_send_command(CAN_CMD_START, 0);   // 3.发送启动命令
     if (ret != ESP_OK)
     {
-        ESP_LOGE("MOTOR_UI", "START failed: %s", esp_err_to_name(ret));
+        ESP_LOGE("MOTOR_UI", "START request failed: %s", esp_err_to_name(ret));
     }
 }
 
@@ -75,7 +79,7 @@ static void UI_StopButtonEvent(lv_event_t *event)
     esp_err_t ret = comm_can_send_command(CAN_CMD_STOP, 0);   // 发送停止命令
     if (ret != ESP_OK)
     {
-        ESP_LOGE("MOTOR_UI", "STOP command failed: %s", esp_err_to_name(ret));   // 记录发送错误
+        ESP_LOGE("MOTOR_UI", "STOP request failed: %s", esp_err_to_name(ret));   // 记录请求提交错误，不混同总线发送结果
     }
 }
 
@@ -123,7 +127,7 @@ speed_slider = lv_slider_create(target_speed_card);   // 创建速度滑块
 lv_obj_set_size(speed_slider, 286, 12);                   // 设置滑块大小
 lv_obj_set_pos(speed_slider, 4, 31);                      // 放在卡片下方
 lv_slider_set_range(speed_slider, -2600, 2600);           // 设置速度范围：-2600~2600 rpm
-lv_slider_set_value(speed_slider, target_speed_rpm, LV_ANIM_OFF);      // 初始目标速度：500 rpm
+lv_slider_set_value(speed_slider, target_speed_rpm, LV_ANIM_OFF);      // 初始目标速度：0 rpm
 lv_obj_set_style_bg_color(speed_slider, lv_color_hex(0x24384A), LV_PART_MAIN);          // 未选中的滑轨颜色
 lv_obj_set_style_bg_color(speed_slider, lv_color_hex(0x2196F3), LV_PART_INDICATOR);     // 已选中的滑轨颜色
 lv_obj_set_style_bg_color(speed_slider, lv_color_hex(0x2196F3), LV_PART_KNOB);          // 滑块圆点颜色
@@ -181,21 +185,25 @@ lv_obj_set_style_text_color(target_speed_label, lv_color_hex(UI_COLOR_TEXT), 0);
 //创建实际速度信息
 actual_speed_label = lv_label_create(speed_info_card);   // 创建实际速度信息
 lv_label_set_text(actual_speed_label, "Actual: 0 rpm");            // 当前实际速度
-lv_obj_set_pos(actual_speed_label, 4, 45);                         // 设置位置
+lv_obj_set_pos(actual_speed_label, 4, 42);                         // 留出默认字体16像素行高，避免卡片底部裁切
 lv_obj_set_style_text_color(actual_speed_label, lv_color_hex(UI_COLOR_TEXT), 0);   // 白色文字
 
 //创建电流信息
 lv_obj_t *current_info_title = lv_label_create(speed_info_card);   // 创建电流信息标题
-lv_label_set_text(current_info_title, "Current Information");      // 设置标题文字
+lv_label_set_text(current_info_title, "Ref/Act (A)");      // 两个电流数值依次为目标/实际，单位A
 lv_obj_set_pos(current_info_title, 158, 0);                        // 放在卡片右半边
 lv_obj_set_style_text_color(current_info_title, lv_color_hex(UI_COLOR_BLUE), 0);   // 蓝色标题
 iq_info_label = lv_label_create(speed_info_card);              // 创建Iq信息
-lv_label_set_text(iq_info_label, "Iq Ref: 0.00   Iq: 0.00");             // 初始值均为0
+lv_label_set_text(iq_info_label, "Iq:0.00/0.00");             // 初始值均为0，缩短文字以容纳负电流
 lv_obj_set_pos(iq_info_label, 158, 24);                                  // 设置位置
+lv_obj_set_width(iq_info_label, 138);   // 卡片右侧可用宽度：308-12-158
+lv_label_set_long_mode(iq_info_label, LV_LABEL_LONG_CLIP);   // 限制在右侧区域，避免跨越卡片边界
 lv_obj_set_style_text_color(iq_info_label, lv_color_hex(UI_COLOR_TEXT), 0);   // 白色文字
 id_info_label = lv_label_create(speed_info_card);              // 创建Id信息
-lv_label_set_text(id_info_label, "Id Ref: 0.00   Id: 0.00");             // 初始值均为0
-lv_obj_set_pos(id_info_label, 158, 45);                                  // 设置位置
+lv_label_set_text(id_info_label, "Id:0.00/0.00");             // 初始值均为0，格式与Iq一致
+lv_obj_set_pos(id_info_label, 158, 42);                                  // 与实际速度同一行，16像素行高完整放入卡片
+lv_obj_set_width(id_info_label, 138);   // 与Iq使用相同宽度
+lv_label_set_long_mode(id_info_label, LV_LABEL_LONG_CLIP);   // 限制在右侧区域
 lv_obj_set_style_text_color(id_info_label, lv_color_hex(UI_COLOR_TEXT), 0);   // 白色文字
 
 motor_state_label = lv_label_create(speed_screen);   // 创建运行状态标签
@@ -214,46 +222,76 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
     CAN_Status_t status;       // 解析后的电机状态
     CAN_Current_t current;   // 保存解析后的电流数据
     CAN_Speed_t speed;   // 解析后的速度数据
-    while (comm_can_receive(&message))//获取原始CAN报文
+    bool status_updated = false;   // 同类报文只保留本轮最后一条有效结果
+    bool speed_updated = false;
+    bool current_updated = false;
+    for (uint32_t i = 0; i < UI_CAN_RX_MAX_PER_TICK && comm_can_receive(&message); i++)   // 限制本次读取数量
     {
         if (comm_can_parse_status(&message, &status))
         {
-            lv_label_set_text(can_status_label, "CAN: RX OK");   // 表示已收到有效状态报文
-            switch (status.state)
-            {
-                case CAN_STATE_STOPPED:
-                    lv_label_set_text(motor_state_label, "Motor: STOPPED");
-                    break;
-
-                case CAN_STATE_ALIGNING:
-                    lv_label_set_text(motor_state_label, "Motor: ALIGNING");
-                    break;
-
-                case CAN_STATE_ALIGN_RELEASE:
-                    lv_label_set_text(motor_state_label, "Motor: ALIGN RELEASE");
-                    break;
-
-                case CAN_STATE_RUNNING:
-                    lv_label_set_text(motor_state_label, "Motor: RUNNING");
-                    break;
-
-                default:
-                    break;
-            }
+            status_updated = true;
         }
         else if (comm_can_parse_speed(&message, &speed))
         {
-            lv_label_set_text_fmt(actual_speed_label, "Actual: %d rpm", (int)speed.actual_speed_rpm);   // 更新实际速度
+            speed_updated = true;
         }
         else if (comm_can_parse_current(&message, &current))
         {
-            char iq_text[64];   // 保存Iq显示字符串
-            char id_text[64];   // 保存Id显示字符串
-            snprintf(iq_text, sizeof(iq_text), "Iq Ref: %.2f  Iq: %.2f", (double)current.iq_ref, (double)current.iq);   // 格式化Iq数据
-            snprintf(id_text, sizeof(id_text), "Id Ref: %.2f  Id: %.2f", (double)current.id_ref, (double)current.id);   // 格式化Id数据
-            lv_label_set_text(iq_info_label, iq_text);   // 更新Iq标签
-            lv_label_set_text(id_info_label, id_text);   // 更新Id标签  
+            current_updated = true;
         }
+    }
+    if (status_updated || speed_updated || current_updated)
+    {
+        can_last_rx_tick = lv_tick_get();   // 只有协议校验通过的报文才能刷新接收时间
+        if (!can_online)
+        {
+            can_online = true;
+            lv_label_set_text(can_status_label, "CAN: RX OK");   // 有效反馈到达后自动恢复
+            lv_obj_set_style_text_color(can_status_label, lv_color_hex(UI_COLOR_GREEN), 0);
+        }
+    }
+    if (can_online && lv_tick_elaps(can_last_rx_tick) >= UI_CAN_TIMEOUT_MS)
+    {
+        can_online = false;
+        lv_label_set_text(can_status_label, "CAN: OFFLINE");   // 无有效报文时回落到离线
+        lv_obj_set_style_text_color(can_status_label, lv_color_hex(UI_COLOR_DIM), 0);
+    }
+    if (status_updated)
+    {
+        switch (status.state)
+        {
+            case CAN_STATE_STOPPED:
+                lv_label_set_text(motor_state_label, "Motor: STOPPED");
+                break;
+
+            case CAN_STATE_ALIGNING:
+                lv_label_set_text(motor_state_label, "Motor: ALIGNING");
+                break;
+
+            case CAN_STATE_ALIGN_RELEASE:
+                lv_label_set_text(motor_state_label, "Motor: ALIGN RELEASE");
+                break;
+
+            case CAN_STATE_RUNNING:
+                lv_label_set_text(motor_state_label, "Motor: RUNNING");
+                break;
+
+            default:
+                break;
+        }
+    }
+    if (speed_updated)
+    {
+        lv_label_set_text_fmt(actual_speed_label, "Actual: %d rpm", (int)speed.actual_speed_rpm);   // 更新实际速度
+    }
+    if (current_updated)
+    {
+        char iq_text[64];   // 保存Iq显示字符串
+        char id_text[64];   // 保存Id显示字符串
+        snprintf(iq_text, sizeof(iq_text), "Iq:%.2f/%.2f", (double)current.iq_ref, (double)current.iq);   // 目标/实际，完整范围为-327.68~327.67 A
+        snprintf(id_text, sizeof(id_text), "Id:%.2f/%.2f", (double)current.id_ref, (double)current.id);   // 与Iq使用相同格式
+        lv_label_set_text(iq_info_label, iq_text);   // 更新Iq标签
+        lv_label_set_text(id_info_label, id_text);   // 更新Id标签
     }
 }
 void motor_ui_create(lv_display_t *display)

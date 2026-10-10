@@ -35,5 +35,7 @@
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=e:\\ZqFOC\\ESP-HMI\\hello_world/build"
-  ]
+  ],
+  "idf.flashType": "UART",
+  "idf.port": "COM3"
 }

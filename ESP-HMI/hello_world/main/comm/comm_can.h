@@ -9,6 +9,7 @@
 esp_err_t comm_can_init(void);   // 初始化CAN控制器
 /* 将控制命令及参数打包成8字节CAN数据 */
 void comm_can_pack_command(CAN_Command_t cmd, uint16_t param, uint8_t data[CAN_FRAME_DLC]);
+/** @brief 提交CAN控制命令；ESP_OK仅表示驱动接受请求，不代表总线发送成功。仅从同一个LVGL任务调用，不支持多个任务同时发送。 */
 esp_err_t comm_can_send_command(CAN_Command_t cmd, uint16_t param);   // 发送CAN控制命令
 
 typedef struct

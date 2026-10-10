@@ -1,5 +1,6 @@
 #include "comm_can.h"
 #include <stdbool.h>   // 提供bool类型
+#include <stdatomic.h>   // 保证任务与ISR共享的发送标记同步
 #include "esp_twai.h"          // TWAI通用驱动接口
 #include "esp_twai_onchip.h"   // ESP32片上TWAI控制器接口
 #include "freertos/FreeRTOS.h"   // FreeRTOS基础接口
@@ -10,18 +11,30 @@
 static twai_node_handle_t can_node = NULL;   // 保存TWAI控制器句柄
 static QueueHandle_t can_rx_queue = NULL;   // 创建队列，使用队列保存接收到的CAN报文
 static uint8_t can_tx_data[CAN_FRAME_DLC] = {0};   // 8字节发送缓冲区
-static bool can_tx_pending = false;               // 上一帧是否尚未完成发送
+static atomic_bool can_tx_pending = false;     // ISR在发送结束后清除；仅由LVGL任务提交命令
+static uint8_t can_stop_data[CAN_FRAME_DLC] = {0};   // STOP独占缓冲区，避免等待普通命令
+static atomic_bool can_stop_pending = false;   // STOP缓冲区是否仍由驱动使用
+static volatile uint32_t can_rx_drop_count = 0;   // 软件接收队列满时的丢帧数，可在调试器查看
+static volatile uint32_t can_tx_success_count = 0;   // 总线实际发送成功次数，由ISR更新
+static volatile uint32_t can_tx_fail_count = 0;      // 总线实际发送失败次数，由ISR更新
 static twai_frame_t can_tx_frame = {
     .header.id = CAN_ID_CMD,         // CAN ID为0x100
     .header.dlc = CAN_FRAME_DLC,     // 数据长度为8字节
     .buffer = can_tx_data,           // 指向发送缓冲区,这里保存的是can_tx_data数组的首地址
     .buffer_len = CAN_FRAME_DLC      // 缓冲区容量
 };
+static twai_frame_t can_stop_frame = {
+    .header.id = CAN_ID_CMD,         // STOP使用相同命令ID和协议
+    .header.dlc = CAN_FRAME_DLC,
+    .buffer = can_stop_data,
+    .buffer_len = CAN_FRAME_DLC
+};
 
 
 /* ==================== CAN控制命令打包 ==================== */
 void comm_can_pack_command(CAN_Command_t cmd, uint16_t param, uint8_t data[CAN_FRAME_DLC])
 {
+    if (data == NULL) return;   // 防止空指针写入
     for (uint8_t i = 0; i < CAN_FRAME_DLC; i++)
     {
         data[i] = 0;   // 清空8字节数据区
@@ -35,16 +48,39 @@ void comm_can_pack_command(CAN_Command_t cmd, uint16_t param, uint8_t data[CAN_F
 esp_err_t comm_can_send_command(CAN_Command_t cmd, uint16_t param)
 {
     if (can_node == NULL) return ESP_ERR_INVALID_STATE;   // 检查CAN是否初始化
-    if (can_tx_pending)
+    bool is_stop = cmd == CAN_CMD_STOP;   // STOP不等待普通命令完成
+    atomic_bool *pending = is_stop ? &can_stop_pending : &can_tx_pending;
+    twai_frame_t *frame = is_stop ? &can_stop_frame : &can_tx_frame;
+    if (*pending)
     {
+        if (is_stop) return ESP_ERR_TIMEOUT;   // 已有STOP在发送，不能覆盖其缓冲区
         esp_err_t ret = twai_node_transmit_wait_all_done(can_node, 10);   // 等待上一帧发送完成
-        if (ret != ESP_OK) return ret;                                    // 等待失败则返回
-        can_tx_pending = false;                                           // 允许重用缓冲区
+        if (*pending) return ret != ESP_OK ? ret : ESP_ERR_TIMEOUT;   // 回调未释放时保留缓冲区
     }
-    comm_can_pack_command(cmd, param, can_tx_data);   // 打包控制命令
-    esp_err_t ret = twai_node_transmit(can_node, &can_tx_frame, 0);   // 提交CAN发送请求
-    if (ret == ESP_OK) can_tx_pending = true;                        // 记录尚未确认发送完成
-    return ret;   // 返回发送请求提交结果
+    comm_can_pack_command(cmd, param, frame->buffer);   // 只改写空闲的静态缓冲区
+    *pending = true;   // 提交前标记，避免发送完成中断先到、任务又把标记置回true
+    esp_err_t ret = twai_node_transmit(can_node, frame, 0);   // 非阻塞提交发送请求
+    if (ret != ESP_OK) *pending = false;   // 未提交成功，驱动不持有该缓冲区
+    return ret;   // ESP_OK仅表示请求被接受，实际结果由发送完成回调记录
+}
+
+/* ==================== CAN发送完成回调 ==================== */
+static bool IRAM_ATTR can_tx_callback(const twai_node_handle_t handle, const twai_tx_done_event_data_t *edata, void *user_ctx)
+{
+    (void)handle;
+    (void)user_ctx;
+    if (edata == NULL) return false;
+    if (edata->is_tx_success)
+    {
+        if (can_tx_success_count < UINT32_MAX) can_tx_success_count++;   // 计数饱和，不回绕
+    }
+    else
+    {
+        if (can_tx_fail_count < UINT32_MAX) can_tx_fail_count++;   // 发送结束不一定成功
+    }
+    if (edata->done_tx_frame == &can_tx_frame) can_tx_pending = false;   // 成功和失败都会释放缓冲区
+    if (edata->done_tx_frame == &can_stop_frame) can_stop_pending = false;
+    return false;   // 无任务需要由本回调唤醒
 }
 
 /* ==================== CAN接收回调 ==================== */
@@ -60,12 +96,16 @@ static bool IRAM_ATTR can_rx_callback(const twai_node_handle_t handle, const twa
     };
     if (twai_node_receive_from_isr(handle, &rx_frame) == ESP_OK)//调用接收函数，将接收到的CAN报文保存到rx_frame的buffer指针指向的message.data数组中
     {
+        if (rx_frame.header.ide || rx_frame.header.rtr || rx_frame.header.fdf || rx_frame.header.dlc != CAN_FRAME_DLC) return false;   // 仅接收标准经典CAN的8字节数据帧
         message.id = rx_frame.header.id;       // 保存CAN报文ID
         message.d_length = rx_frame.header.dlc;     // 保存数据长度
 
         if (can_rx_queue != NULL)
         {
-            xQueueSendFromISR(can_rx_queue, &message, &task_woken);   // 将消息复制到队列
+            if (xQueueSendFromISR(can_rx_queue, &message, &task_woken) != pdTRUE)
+            {
+                if (can_rx_drop_count < UINT32_MAX) can_rx_drop_count++;   // 队列满则丢弃新帧，保留已排队的数据
+            }
         }
     }
 
@@ -80,7 +120,6 @@ bool comm_can_receive(CAN_RxMessage_t *message)
     return xQueueReceive(can_rx_queue, message, 0) == pdTRUE;   // 从队列取出一条报文
 }
 
-/* ==================== CAN状态报文解析 ==================== */
 /* ==================== CAN状态报文解析 ==================== */
 bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status)
 {
@@ -151,7 +190,8 @@ esp_err_t comm_can_init(void)
     }
     /*注册CAN接收回调*/ 
     twai_event_callbacks_t callbacks = {
-    .on_rx_done = can_rx_callback   // 收到CAN报文时执行回调
+    .on_rx_done = can_rx_callback,   // 收到CAN报文时执行回调
+    .on_tx_done = can_tx_callback    // 发送结束后释放对应静态缓冲区
     };
     ret = twai_node_register_event_callbacks(can_node, &callbacks, NULL);
     if (ret != ESP_OK)
