@@ -7,6 +7,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #define TOUCH_I2C_ADDR 0x2E   // CHSC5432的I2C地址
+#define TOUCH_EVENT_SIZE 28U   // 每次读取完整的28字节触摸事件
+#define TOUCH_H_RES      320U   // 横屏触摸坐标宽度
+#define TOUCH_V_RES      240U   // 横屏触摸坐标高度
 static i2c_master_dev_handle_t touch_dev = NULL;   // 保存触摸设备句柄
 static lv_point_t touch_last_point = {0};   // 保存上一次有效触摸坐标
 static lv_indev_t *touch_indev = NULL;   // LVGL触摸输入设备句柄

@@ -10,8 +10,8 @@
 void app_main(void)
 {
     ESP_ERROR_CHECK(BSP_XL9555_Init());                   // 初始化I2C和XL9555
-    esp_err_t touch_ret = BSP_touch_probe();   // 检测触摸芯片
-    ESP_LOGI("TOUCH", "Probe result: %s", esp_err_to_name(touch_ret));   // 输出检测结果
+    esp_err_t touch_ret = BSP_touch_init();   // 复位并初始化触摸芯片
+    ESP_LOGI("TOUCH", "Init result: %s", esp_err_to_name(touch_ret));   // 输出初始化结果
     lv_display_t *display = bsp_lcd_init();              // 初始化LCD和LVGL
     ESP_ERROR_CHECK(comm_can_init());                    // 初始化CAN控制器
     lvgl_port_lock(0);   // 获取LVGL锁
