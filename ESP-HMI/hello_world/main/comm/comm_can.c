@@ -80,6 +80,22 @@ bool comm_can_receive(CAN_RxMessage_t *message)
     return xQueueReceive(can_rx_queue, message, 0) == pdTRUE;   // 从队列取出一条报文
 }
 
+/* ==================== CAN状态报文解析 ==================== */
+bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status)
+{
+    if (message == NULL || status == NULL) return false;   // 检查参数
+    if (message->id != CAN_ID_STATUS) return false;        // 检查是否为状态报文
+    if (message->d_length != CAN_FRAME_DLC) return false;  // 检查数据长度
+    if (message->data[0] > CAN_STATE_RUNNING || message->data[1] > CAN_MODE_POSITION) return false;   // 检查状态和模式
+    status->state = (CAN_State_t)message->data[0];   // 解析电机状态
+    status->mode = (CAN_Mode_t)message->data[1];     // 解析控制模式
+    uint16_t actual_raw = (uint16_t)message->data[2] | ((uint16_t)message->data[3] << 8);   // 合并实际转速的两个字节
+    uint16_t target_raw = (uint16_t)message->data[4] | ((uint16_t)message->data[5] << 8);   // 合并目标转速的两个字节
+    status->actual_speed_rpm = (int16_t)actual_raw;   // 转换为有符号实际转速
+    status->target_speed_rpm = (int16_t)target_raw;   // 转换为有符号目标转速
+    return true;   // 解析成功
+}
+
 /* ==================== CAN控制器初始化 ==================== */
 esp_err_t comm_can_init(void)
 {
@@ -103,13 +119,11 @@ esp_err_t comm_can_init(void)
         can_node = NULL;              // 清空句柄
         return ESP_ERR_NO_MEM;       // 返回内存不足错误码
     }
-
-
     /*注册CAN接收回调*/ 
     twai_event_callbacks_t callbacks = {
     .on_rx_done = can_rx_callback   // 收到CAN报文时执行回调
     };
-    ret = twai_node_register_event_callback(can_node, &callbacks, NULL);
+    ret = twai_node_register_event_callbacks(can_node, &callbacks, NULL);
     if (ret != ESP_OK)
     {
         vQueueDelete(can_rx_queue);   // 删除接收队列

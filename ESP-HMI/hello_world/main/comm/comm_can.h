@@ -18,6 +18,15 @@ typedef struct
     uint8_t data[CAN_FRAME_DLC];   // 接收CAN报文数据
 } CAN_RxMessage_t;//can发来一条CAN报文，我们就可以将其ID,数据长度和8字节内容放入结构体
 
-bool comm_can_receive(CAN_RxMessage_t *message);   // 从接收队列中取出一条报文
+/* ==================== 电机状态信息 ==================== */
+typedef struct
+{
+    CAN_State_t state;           // 电机运行状态
+    CAN_Mode_t mode;             // 当前控制模式
+    int16_t actual_speed_rpm;    // 实际转速
+    int16_t target_speed_rpm;    // STM32当前目标转速
+} CAN_Status_t;//存放解析之后的结果。
 
+bool comm_can_receive(CAN_RxMessage_t *message);   // 从接收队列中取出一条报文
+bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status);   // 解析电机状态报文
 #endif /* COMM_CAN_H */

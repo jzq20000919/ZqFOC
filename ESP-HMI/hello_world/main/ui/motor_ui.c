@@ -19,6 +19,7 @@ static lv_obj_t *target_speed_label = NULL;        // 信息区目标速度
 static lv_obj_t *actual_speed_label = NULL;        // 实际速度
 static lv_obj_t *iq_info_label = NULL;             // Iq信息
 static lv_obj_t *id_info_label = NULL;             // Id信息
+static lv_obj_t *motor_state_label = NULL;   // 电机运行状态显示
 /* ==================== UI状态 ==================== */
 static int32_t target_speed_rpm = 500;         // 当前目标速度
 
@@ -196,9 +197,52 @@ lv_label_set_text(id_info_label, "Id Ref: 0.00   Id: 0.00");             // 初�
 lv_obj_set_pos(id_info_label, 158, 45);                                  // 设置位置
 lv_obj_set_style_text_color(id_info_label, lv_color_hex(UI_COLOR_TEXT), 0);   // 白色文字
 
+motor_state_label = lv_label_create(speed_screen);   // 创建运行状态标签
+lv_label_set_text(motor_state_label, "Motor: UNKNOWN");   // 初始状态未知
+lv_obj_set_pos(motor_state_label, 8, 215);   // 放在信息卡片下方
+lv_obj_set_style_text_color(motor_state_label, lv_color_hex(UI_COLOR_DIM), 0);   // 设置文字颜色
+
 }
 
+/* ==================== CAN数据接收与UI更新 ==================== */
+static void UI_CanReceiveTimer(lv_timer_t *timer)
+{
+    (void)timer;   // 不使用定时器参数
 
+    CAN_RxMessage_t message;   // 原始CAN报文
+    CAN_Status_t status;       // 解析后的电机状态
+
+    while (comm_can_receive(&message))
+    {
+        if (comm_can_parse_status(&message, &status))
+        {
+            lv_label_set_text_fmt(actual_speed_label, "Actual: %d rpm", (int)status.actual_speed_rpm);   // 更新实际速度
+            lv_label_set_text(can_status_label, "CAN: RX OK");   // 表示已收到有效状态报文
+
+            switch (status.state)
+            {
+                case CAN_STATE_STOPPED:
+                    lv_label_set_text(motor_state_label, "Motor: STOPPED");
+                    break;
+
+                case CAN_STATE_ALIGNING:
+                    lv_label_set_text(motor_state_label, "Motor: ALIGNING");
+                    break;
+
+                case CAN_STATE_ALIGN_RELEASE:
+                    lv_label_set_text(motor_state_label, "Motor: ALIGN RELEASE");
+                    break;
+
+                case CAN_STATE_RUNNING:
+                    lv_label_set_text(motor_state_label, "Motor: RUNNING");
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+}
 
 
 
@@ -208,4 +252,5 @@ void motor_ui_create(lv_display_t *display)
     lv_display_set_default(display);   // 设置当前默认显示器
     UI_Create_SpeedScreen();   // 创建速度控制页面
     lv_screen_load(speed_screen);   // 显示速度控制页面
+    lv_timer_create(UI_CanReceiveTimer, 50, NULL);   // 每50ms调用一次UI_CanReceiveTimer
 }
