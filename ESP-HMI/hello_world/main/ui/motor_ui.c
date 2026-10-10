@@ -1,6 +1,7 @@
 #include "motor_ui.h"
 #include "comm_can.h"   // CAN通信接口
 #include "esp_log.h"    // ESP-IDF日志输出
+#include <stdio.h>   // 提供snprintf字符串格式化函数
 /* ==================== 界面颜色 ==================== */
 #define UI_COLOR_BG      0x07121F   // 页面背景色
 #define UI_COLOR_CARD    0x0D2235   // 卡片背景色
@@ -211,14 +212,13 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
 
     CAN_RxMessage_t message;   // 原始CAN报文
     CAN_Status_t status;       // 解析后的电机状态
-
-    while (comm_can_receive(&message))
+    CAN_Current_t current;   // 保存解析后的电流数据
+    CAN_Speed_t speed;   // 解析后的速度数据
+    while (comm_can_receive(&message))//获取原始CAN报文
     {
         if (comm_can_parse_status(&message, &status))
         {
-            lv_label_set_text_fmt(actual_speed_label, "Actual: %d rpm", (int)status.actual_speed_rpm);   // 更新实际速度
             lv_label_set_text(can_status_label, "CAN: RX OK");   // 表示已收到有效状态报文
-
             switch (status.state)
             {
                 case CAN_STATE_STOPPED:
@@ -240,6 +240,19 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
                 default:
                     break;
             }
+        }
+        else if (comm_can_parse_speed(&message, &speed))
+        {
+            lv_label_set_text_fmt(actual_speed_label, "Actual: %d rpm", (int)speed.actual_speed_rpm);   // 更新实际速度
+        }
+        else if (comm_can_parse_current(&message, &current))
+        {
+            char iq_text[64];   // 保存Iq显示字符串
+            char id_text[64];   // 保存Id显示字符串
+            snprintf(iq_text, sizeof(iq_text), "Iq Ref: %.2f  Iq: %.2f", (double)current.iq_ref, (double)current.iq);   // 格式化Iq数据
+            snprintf(id_text, sizeof(id_text), "Id Ref: %.2f  Id: %.2f", (double)current.id_ref, (double)current.id);   // 格式化Id数据
+            lv_label_set_text(iq_info_label, iq_text);   // 更新Iq标签
+            lv_label_set_text(id_info_label, id_text);   // 更新Id标签  
         }
     }
 }

@@ -23,10 +23,15 @@ typedef struct
 {
     CAN_State_t state;           // 电机运行状态
     CAN_Mode_t mode;             // 当前控制模式
-    int16_t actual_speed_rpm;    // 实际转速
-    int16_t target_speed_rpm;    // STM32当前目标转速
 } CAN_Status_t;//存放解析之后的结果。
-
+/* ==================== 电机速度信息 ==================== */
+typedef struct
+{
+    int16_t actual_speed_rpm;   // 电机实际转速
+    int16_t target_speed_rpm;   // 电机目标转速
+} CAN_Speed_t;
 bool comm_can_receive(CAN_RxMessage_t *message);   // 从接收队列中取出一条报文
 bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status);   // 解析电机状态报文
+bool comm_can_parse_current(const CAN_RxMessage_t *message, CAN_Current_t *current);   // 解析电流报文
+bool comm_can_parse_speed(const CAN_RxMessage_t *message, CAN_Speed_t *speed);   // 解析速度报文
 #endif /* COMM_CAN_H */

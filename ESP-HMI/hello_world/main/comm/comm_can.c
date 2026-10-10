@@ -81,21 +81,51 @@ bool comm_can_receive(CAN_RxMessage_t *message)
 }
 
 /* ==================== CAN状态报文解析 ==================== */
+/* ==================== CAN状态报文解析 ==================== */
 bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status)
 {
     if (message == NULL || status == NULL) return false;   // 检查参数
-    if (message->id != CAN_ID_STATUS) return false;        // 检查是否为状态报文
+    if (message->id != CAN_ID_STATUS) return false;        // 检查报文ID
     if (message->d_length != CAN_FRAME_DLC) return false;  // 检查数据长度
-    if (message->data[0] > CAN_STATE_RUNNING || message->data[1] > CAN_MODE_POSITION) return false;   // 检查状态和模式
-    status->state = (CAN_State_t)message->data[0];   // 解析电机状态
+    if (message->data[0] > CAN_STATE_RUNNING || message->data[1] > CAN_MODE_POSITION) return false;   // 检查数据有效性
+    status->state = (CAN_State_t)message->data[0];   // 解析运行状态
     status->mode = (CAN_Mode_t)message->data[1];     // 解析控制模式
-    uint16_t actual_raw = (uint16_t)message->data[2] | ((uint16_t)message->data[3] << 8);   // 合并实际转速的两个字节
-    uint16_t target_raw = (uint16_t)message->data[4] | ((uint16_t)message->data[5] << 8);   // 合并目标转速的两个字节
-    status->actual_speed_rpm = (int16_t)actual_raw;   // 转换为有符号实际转速
-    status->target_speed_rpm = (int16_t)target_raw;   // 转换为有符号目标转速
     return true;   // 解析成功
 }
+/* ==================== CAN电流报文解析 ==================== */
+bool comm_can_parse_current(const CAN_RxMessage_t *message, CAN_Current_t *current)
+{
+    if (message == NULL || current == NULL) return false;   // 检查参数
+    if (message->id != CAN_ID_CURRENT) return false;        // 检查报文ID
+    if (message->d_length != CAN_FRAME_DLC) return false;   // 检查数据长度
 
+    uint16_t iq_ref_raw = (uint16_t)message->data[0] | ((uint16_t)message->data[1] << 8);   // 读取Iq_ref
+    uint16_t iq_raw = (uint16_t)message->data[2] | ((uint16_t)message->data[3] << 8);       // 读取Iq
+    uint16_t id_ref_raw = (uint16_t)message->data[4] | ((uint16_t)message->data[5] << 8);   // 读取Id_ref
+    uint16_t id_raw = (uint16_t)message->data[6] | ((uint16_t)message->data[7] << 8);       // 读取Id
+
+    current->iq_ref = (int16_t)iq_ref_raw / CAN_CURRENT_SCALE;   // 恢复Iq目标值，单位A
+    current->iq = (int16_t)iq_raw / CAN_CURRENT_SCALE;           // 恢复Iq实际值，单位A
+    current->id_ref = (int16_t)id_ref_raw / CAN_CURRENT_SCALE;   // 恢复Id目标值，单位A
+    current->id = (int16_t)id_raw / CAN_CURRENT_SCALE;           // 恢复Id实际值，单位A
+
+    return true;   // 解析成功
+}
+/* ==================== CAN速度报文解析 ==================== */
+bool comm_can_parse_speed(const CAN_RxMessage_t *message, CAN_Speed_t *speed)
+{
+    if (message == NULL || speed == NULL) return false;   // 检查参数
+    if (message->id != CAN_ID_SPEED) return false;        // 检查速度报文ID
+    if (message->d_length != CAN_FRAME_DLC) return false; // 检查数据长度
+
+    uint16_t actual_raw = (uint16_t)message->data[0] | ((uint16_t)message->data[1] << 8);   // 合并实际转速
+    uint16_t target_raw = (uint16_t)message->data[2] | ((uint16_t)message->data[3] << 8);   // 合并目标转速
+
+    speed->actual_speed_rpm = (int16_t)actual_raw;   // 得到实际转速
+    speed->target_speed_rpm = (int16_t)target_raw;   // 得到目标转速
+
+    return true;   // 解析成功
+}
 /* ==================== CAN控制器初始化 ==================== */
 esp_err_t comm_can_init(void)
 {
