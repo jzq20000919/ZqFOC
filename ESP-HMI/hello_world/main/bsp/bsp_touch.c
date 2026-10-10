@@ -36,7 +36,7 @@ esp_err_t BSP_touch_init(void)
 static bool BSP_touch_ReadPoint(uint16_t *x, uint16_t *y)
 {
     if (touch_dev == NULL || x == NULL || y == NULL) return false;   // 检查参数
-    uint8_t reg_addr[4] = {0x2C, 0x00, 0x00, 0x20};   // 事件寄存器0x2000002C，小端格式
+    uint8_t reg_addr[4] = {0x20, 0x00, 0x00, 0x2C};   // 事件寄存器0x2000002C，大端格式，高字节先发送
     uint8_t data[TOUCH_EVENT_SIZE] = {0};            // 接收触摸事件数据
     esp_err_t ret = i2c_master_transmit_receive(touch_dev, reg_addr, 4, data, sizeof(data), 20);   // 读取触摸数据
     if (ret != ESP_OK) return false;

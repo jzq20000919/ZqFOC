@@ -20,10 +20,12 @@
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
+#include "fdcan.h"
 #include "opamp.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "foc_lib.h"
@@ -63,8 +65,8 @@ void SystemClock_Config(void);
 /* USER CODE END 0 */
 
 /**
-  * @brief  完成外设与FOC初始化，并进入主循环
-  * @return 不返回
+  * @brief  The application entry point.
+  * @retval int
   */
 int main(void)
 {
@@ -73,23 +75,23 @@ int main(void)
 
   /* USER CODE END 1 */
 
-  /* MCU配置 ---------------------------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
-  /* 初始化HAL、Flash接口与SysTick。 */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
-  /* 配置系统时钟。 */
+  /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
-  /* 初始化已配置的外设。 */
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
@@ -101,12 +103,13 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM6_Init();
   MX_USART2_UART_Init();
+  MX_FDCAN1_Init();
   /* USER CODE BEGIN 2 */
   FOC_Motor_Init();
 
   /* USER CODE END 2 */
 
-  /* 主循环 */
+  /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
@@ -119,18 +122,19 @@ int main(void)
 }
 
 /**
-  * @brief  配置系统时钟
+  * @brief System Clock Configuration
+  * @retval None
   */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /* 配置内部稳压器输出电压。
+  /** Configure the main internal regulator output voltage
   */
   HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
-  /* 按设定参数初始化RCC振荡器。
+  /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
@@ -147,7 +151,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /* 配置CPU、AHB和APB总线时钟。
+  /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
@@ -205,7 +209,8 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 /* USER CODE END 4 */
 
 /**
-  * @brief  发生初始化错误时停止运行
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
   */
 void Error_Handler(void)
 {
@@ -219,9 +224,11 @@ void Error_Handler(void)
 }
 #ifdef USE_FULL_ASSERT
 /**
-  * @brief  处理HAL断言失败
-  * @param  file 触发断言的源文件名
-  * @param  line 触发断言的行号
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
 {
