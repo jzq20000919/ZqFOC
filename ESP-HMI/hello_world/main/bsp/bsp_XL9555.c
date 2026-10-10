@@ -10,11 +10,12 @@
 #define XL9555_OUTPUT_PORT0   0x02/* XL9555 输出寄存器 Port0 */
 #define XL9555_CONFIG_PORT0   0x06/* XL9555 配置寄存器 Port0 */
 #define XL9555_LCD_BL_MASK    (1U << 7)/* LCD 背光连接在 XL9555 的 P0.7 */
+#define XL9555_TOUCH_RST_MASK (1U << 6)   // P0.6控制触摸芯片复位
 
 static i2c_master_bus_handle_t i2c_bus = NULL;//i2c句柄
 static i2c_master_dev_handle_t xl9555_dev = NULL;//XL9555 设备句柄
 
-//i2c总线初始化函数
+//ESP32 I2C总线初始化函数
 static esp_err_t BSP_I2C_Init(void)
 {
     const i2c_master_bus_config_t i2c_bus_config ={ 
@@ -80,14 +81,31 @@ static esp_err_t XL9555_ReadRegister(uint8_t reg, uint8_t *data)
         1000                   // 超时时间1000 ms
     );
 }
+/* ==================== 触摸芯片复位控制 ==================== */
+esp_err_t BSP_XL9555_SetTouchReset(bool asserted)
+{
+    uint8_t output_value = 0;
+    esp_err_t ret = XL9555_ReadRegister(XL9555_OUTPUT_PORT0, &output_value);   // 读取当前输出状态
+    if (ret != ESP_OK) return ret;
+
+    if (asserted)
+    {
+        output_value &= (uint8_t)~XL9555_TOUCH_RST_MASK;   // P0.6输出低电平，进入复位
+    }
+    else
+    {
+        output_value |= XL9555_TOUCH_RST_MASK;   // P0.6输出高电平，释放复位
+    }
+    return XL9555_WriteRegister(XL9555_OUTPUT_PORT0, output_value);   // 写回输出寄存器
+}
 
 /* 将 XL9555 的 P0.7 配置为输出，用于控制 LCD 背光 */
-static esp_err_t BSP_XL9555_ConfigBacklightPin(void)
+static esp_err_t BSP_XL9555_ConfigPins(void)
 {
     uint8_t config_value = 0;
     esp_err_t ret = XL9555_ReadRegister(XL9555_CONFIG_PORT0, &config_value);   // 读取Port0方向配置
     if (ret != ESP_OK) return ret;                                            // 读取失败则直接返回
-    config_value &= ~XL9555_LCD_BL_MASK;                                      // 将bit7清0，P0.7设置为输出
+    config_value &= (uint8_t)~(XL9555_LCD_BL_MASK | XL9555_TOUCH_RST_MASK);   // P0.7和P0.6均配置为输出
     return XL9555_WriteRegister(XL9555_CONFIG_PORT0, config_value);            // 写回配置寄存器
 }
 
@@ -108,17 +126,24 @@ esp_err_t BSP_XL9555_SetBacklight(bool enabled)
     return XL9555_WriteRegister(XL9555_OUTPUT_PORT0, output_value);             // 将新状态写回XL9555
 }
 
+
+
 /* 初始化板级I2C和XL9555 */
 esp_err_t BSP_XL9555_Init(void)
 {
     esp_err_t ret;
-
     ret = BSP_I2C_Init();                     // 创建ESP32-S3的I2C总线
     if (ret != ESP_OK) return ret;                // 创建失败则直接返回错误
     ret = BSP_XL9555_I2C_LINK();                 // 将XL9555加入I2C总线
     if (ret != ESP_OK) return ret;                // 添加失败则直接返回错误
-    ret = BSP_XL9555_ConfigBacklightPin();         // 将XL9555的P0.7配置为输出
+    ret = BSP_XL9555_SetTouchReset(false);   // 先将P0.6输出值置高，防止配置为输出后保持复位
+    if (ret != ESP_OK) return ret;
+    ret = BSP_XL9555_ConfigPins();         // 将XL9555的P0.7配置为输出
     if (ret != ESP_OK) return ret;                // 配置失败则直接返回错误
-
     return ESP_OK;                                // 全部初始化成功
+}
+/* ==================== 获取共享I2C总线 ==================== */
+i2c_master_bus_handle_t BSP_XL9555_GetI2CBus(void)
+{
+    return i2c_bus;   // 返回已经初始化的I2C总线句柄
 }

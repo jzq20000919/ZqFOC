@@ -5,18 +5,17 @@
 #include "bsp_lcd.h"
 #include "motor_ui.h"
 #include "comm_can.h"
-
+#include "bsp_touch.h"
+#include "esp_log.h"
 void app_main(void)
 {
     ESP_ERROR_CHECK(BSP_XL9555_Init());                   // 初始化I2C和XL9555
-
+    esp_err_t touch_ret = BSP_touch_probe();   // 检测触摸芯片
+    ESP_LOGI("TOUCH", "Probe result: %s", esp_err_to_name(touch_ret));   // 输出检测结果
     lv_display_t *display = bsp_lcd_init();              // 初始化LCD和LVGL
-
     ESP_ERROR_CHECK(comm_can_init());                    // 初始化CAN控制器
-
     lvgl_port_lock(0);                                   // 获取LVGL锁
     motor_ui_create(display);                            // 创建UI
     lvgl_port_unlock();                                  // 释放LVGL锁
-
     ESP_ERROR_CHECK(BSP_XL9555_SetBacklight(true));  // 打开LCD背光
 }
