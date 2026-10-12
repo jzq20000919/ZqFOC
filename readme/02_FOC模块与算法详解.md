@@ -117,7 +117,7 @@ manager在调用它前已经关闭三相通道，并启动两路注入ADC及CH4�
 |---|---|
 | `FOC_ENCODER_Init()` | 绑定TIM3，清零软件量和定时器计数，加载默认offset，启动编码器模式 |
 | `FOC_ENCODER_UpdateAngle()` | 读当前计数并计算机械角、电角度 |
-| `FOC_ENCODER_UpdateSpeed()` | 计算计数差，修正回绕，以dt换算带符号rpm并更新测速历史 |
+| `FOC_ENCODER_UpdateSpeed()` | 计算计数差，修正回绕，用传入的dt换算speed_raw，再经5ms低通更新speed和测速历史 |
 | `FOC_ENCODER_SetElectricalOffset()` | 将offset归一化后保存 |
 | `FOC_ENCODER_CalibrateElectricalOffset()` | 单点计算offset，并同步角度、测速历史、清零速度；当前启动流程不使用该单点接口 |
 | `FOC_ENCODER_CalibrateElectricalOffsetSamples()` | 对机械角数组做圆周平均，检查样本有效性，计算offset并更新角度；当前启动流程使用此接口 |
@@ -144,9 +144,9 @@ rpm = delta × 60 / (4096 × dt)
 
 例如上一计数4090、当前4，原始差值-4086，回绕修正后为+10。若dt=1ms，速度约+146.48rpm。反向从4到4090时，修正差值为-10，反馈为负值。
 
-dt≤0时函数写速度0；每次调用都会更新 `spd_last_count`。速度环传入1ms；非RUNNING主循环传入实际时间差换算的秒数。
+dt≤0时函数写速度0；每次调用都会更新 `spd_last_count`。速度环传入固定1ms，非RUNNING状态下主循环传入两次测速的HAL时间差换算的秒数。停机和对齐释放时同步计数并清零原始速度与滤波历史。
 
-这个算法假设两次测速之间实际位移小于半圈，否则无法区分方向和跨过的圈数。它是简单差分测速，没有低通滤波；1ms内一个计数对应约14.65rpm，低速时会有量化台阶。`UpdateSpeed()` 中的 `dt` 不能直接传HAL毫秒值。
+这个算法假设两次测速之间实际位移小于半圈，否则无法区分方向和跨过的圈数。差分测速保存在 `speed_raw`，再经 `ENCODER_SPEED_FILTER_TS` 指定的一阶低通得到 `speed`，当前时间常数由2ms增至5ms，设0可旁路。1ms内一个计数对应约14.65rpm，低速时会有量化台阶；增强滤波可减小高频波动，也会增加闭环反馈延迟，不保证解决真实低频振荡。`UpdateSpeed()` 中的 `dt` 不能直接传HAL毫秒值。
 
 ### 4.3 电角度offset为什么要校准
 

@@ -16,6 +16,7 @@ typedef struct
     float angle_e;            // 电角度，rad
     float angle_e_offset;     // 电角度零点偏置，rad
     float speed;              // 机械转速，rpm
+    float speed_raw;          // 未滤波的差分转速，rpm；保留它便于区分测速量化与真实低频振荡
 } FOC_ENCODER_HandleTypeDef;
 
 /**
@@ -31,7 +32,7 @@ void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *hti
  */
 void FOC_ENCODER_UpdateAngle(FOC_ENCODER_HandleTypeDef *encoder);
 /**
- * @brief  根据计数差更新机械转速
+ * @brief  根据计数差计算speed_raw，再经一阶低通更新speed；不改变调用周期
  * @param  encoder 编码器句柄
  * @param  dt 两次测速间隔，s
  */

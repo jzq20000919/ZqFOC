@@ -18,7 +18,7 @@ typedef enum
 } FOC_CONTROL_MODE;
 
 /**
- * @brief  初始化VOFA+通信并启动UART单字节中断接收
+ * @brief  初始化VOFA+通信并启动512字节UART循环DMA接收
  * @param  uart UART句柄
  * @param  encoder 编码器句柄
  * @param  loop_cur 电流环句柄
@@ -26,7 +26,7 @@ typedef enum
  * @param  loop_pos 位置环句柄
  * @return HAL_OK 接收启动成功
  * @return HAL_ERROR 接收启动失败
- * @note   返回值来自HAL_UART_Receive_IT，也可能返回HAL_BUSY。
+ * @note   USART必须已有循环RX DMA；返回值来自HAL_UART_Receive_DMA，也可能返回HAL_BUSY。
  */
 HAL_StatusTypeDef FOC_VOFA_Init(UART_HandleTypeDef *uart,
                                 FOC_ENCODER_HandleTypeDef *encoder,
@@ -48,11 +48,12 @@ void FOC_VOFA_SetControlMode(FOC_CONTROL_MODE mode);
 void FOC_VOFA_RequestTelemetry(void);
 /**
  * @brief  在主循环中打包并通过UART DMA发送JustFloat遥测帧
- * @note   DMA忙时跳过当前帧。
+ * @note   最快每1ms发送一次最新值，DMA忙时跳过当前帧；十个通道与44字节帧格式不变。
  */
 void FOC_VOFA_ProcessTx(void);
 /**
- * @brief  在主循环中解析并执行已接收的控制命令
+ * @brief  在主循环中读取循环DMA，遇LF执行完整ASCII命令，每轮最多处理128字节
+ * @note   支持半条命令和连续多条命令；超长、覆盖或接收错误时丢弃到LF，不执行残缺命令。
  */
 void FOC_VOFA_ProcessRx(void);
 

@@ -15,6 +15,7 @@ void FOC_ENCODER_Init(FOC_ENCODER_HandleTypeDef *encoder, TIM_HandleTypeDef *hti
     encoder->angle_e = 0.0f;
     encoder->angle_e_offset = ENCODER_ELECTRICAL_OFFSET;
     encoder->speed = 0.0f;
+    encoder->speed_raw = 0.0f;
     __HAL_TIM_SET_COUNTER(encoder->htim, 0);
     HAL_TIM_Encoder_Start(encoder->htim, TIM_CHANNEL_ALL); 
 }
@@ -47,11 +48,14 @@ void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt)
     }
     if(dt >0.0f)
     {
-        encoder->speed = (float)d_count * 60.0f / (float)ENCODER_CPR / dt;
+        encoder->speed_raw = (float)d_count * 60.0f / (float)ENCODER_CPR / dt;
+        float alpha = dt / (ENCODER_SPEED_FILTER_TS + dt); // 时间常数越大越平滑；5ms、1ms采样时，新测速值权重为1/6
+        encoder->speed += alpha * (encoder->speed_raw - encoder->speed); // 控制环与VOFA使用同一滤波反馈，不能只美化显示
     }
     else
     {
         encoder->speed = 0.0f;
+        encoder->speed_raw = 0.0f;
     }
     encoder->spd_last_count = count_now;
 }
@@ -72,6 +76,7 @@ void FOC_ENCODER_CalibrateElectricalOffset(FOC_ENCODER_HandleTypeDef *encoder,fl
     FOC_ENCODER_UpdateAngle(encoder);
     encoder->spd_last_count = encoder->count;
     encoder->speed = 0.0f;
+    encoder->speed_raw = 0.0f;
 }
 
 HAL_StatusTypeDef FOC_ENCODER_CalibrateElectricalOffsetSamples(

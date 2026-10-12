@@ -59,6 +59,8 @@ void FOC_Motor_Stop(void)
 
   FOC_ENCODER_UpdateAngle(&foc_motor.encoder);
   foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
+  foc_motor.encoder.speed = 0.0f; // 停机时清除测速滤波历史，避免下一次启动残留上次反馈
+  foc_motor.encoder.speed_raw = 0.0f;
   idle_telemetry_last_tick = HAL_GetTick();
   FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.encoder.angle_m);
   FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
@@ -127,6 +129,7 @@ static void FOC_Motor_ProcessAlignment(void)
     FOC_ENCODER_UpdateAngle(&foc_motor.encoder);
     foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
     foc_motor.encoder.speed = 0.0f;
+    foc_motor.encoder.speed_raw = 0.0f; // 对齐释放后同步清零原始测速与滤波反馈
     foc_motor.loop_spd.speed_fbk = 0.0f;
     FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, 0.0f);
     FOC_LOOP_CUR_SetReference(&foc_motor.loop_cur, 0.0f, 0.0f);

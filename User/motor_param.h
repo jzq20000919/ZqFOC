@@ -21,6 +21,7 @@
 
 // 编码器参数
 #define ENCODER_CPR                 4096U      // 每机械圈计数
+#define ENCODER_SPEED_FILTER_TS     0.005f     // 测速一阶低通时间常数，s；从2ms增至5ms增强平滑，过大会增加闭环反馈延迟，设0可关闭滤波
 #define ENCODER_ELECTRICAL_OFFSET   0.0f       // 初始电角度偏置，rad
 
 // 控制频率与周期
