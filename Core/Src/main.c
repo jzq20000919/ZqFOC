@@ -30,6 +30,7 @@
 /* USER CODE BEGIN Includes */
 #include "foc_lib.h"
 #include "foc_manager.h"
+#include "foc_can.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -119,7 +120,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    FOC_CAN_ProcessRx();
     FOC_Motor_Task();
+    FOC_CAN_SendFeedback();
   }
   /* USER CODE END 3 */
 }

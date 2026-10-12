@@ -1,5 +1,6 @@
 #include "foc_can.h"
 #include "fdcan.h"
+#include "foc_manager.h"
 volatile uint32_t foc_can_rx_count = 0U;     // 成功接收的报文数量
 volatile uint8_t foc_can_rx_data[8] = {0};  // 最近一次收到的8字节数据
 HAL_StatusTypeDef FOC_CAN_Init(void)
@@ -23,17 +24,13 @@ HAL_StatusTypeDef FOC_CAN_Init(void)
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
         return HAL_ERROR;                   // 启动CAN控制器失败
 
-    if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
-    {
-        return HAL_ERROR;  // CAN启动失败
-    }
     return HAL_OK;  // CAN启动成功
 }
 
 void FOC_CAN_ProcessRx(void)
 {
     FDCAN_RxHeaderTypeDef header = {0};
-    uint8_t data[8] = {0};
+    uint8_t data[64] = {0};                 // HAL先按DLC复制数据，预留最大帧长度，避免校验前越界
 
     static int16_t target_speed = 0;
     static uint8_t start_pending = 0;
@@ -49,10 +46,13 @@ void FOC_CAN_ProcessRx(void)
         if (header.Identifier != 0x100U ||
             header.IdType != FDCAN_STANDARD_ID ||
             header.RxFrameType != FDCAN_DATA_FRAME ||
+            header.FDFormat != FDCAN_CLASSIC_CAN ||
             header.DataLength != FDCAN_DLC_BYTES_8)
             continue;
 
         foc_can_rx_count++;
+        for (uint32_t i = 0U; i < 8U; i++)
+            foc_can_rx_data[i] = data[i];   // 只保存通过帧格式校验的最近一次报文
 
         // Byte1和Byte2组成16位参数
         uint16_t raw = (uint16_t)data[1] |
@@ -70,8 +70,7 @@ void FOC_CAN_ProcessRx(void)
 
                 if (foc_motor.motor_state == FOC_STATE_RUNNING)
                 {
-                    FOC_LOOP_SPD_SetSpeedRef(
-                        &foc_motor.loop_spd, (float)target_speed);
+                    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
                 }
                 break;
 
@@ -101,8 +100,7 @@ void FOC_CAN_ProcessRx(void)
     {
         if (foc_motor.motor_state == FOC_STATE_RUNNING)
         {
-            FOC_LOOP_SPD_SetSpeedRef(
-                &foc_motor.loop_spd, (float)target_speed);
+            FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
 
             start_pending = 0;
         }
@@ -126,10 +124,11 @@ static void FOC_CAN_Send(uint32_t id, uint8_t data[8])
     header.FDFormat = FDCAN_CLASSIC_CAN;
     header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
 
-    if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0U)
-    {
-        HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &header, data);
-    }
+    if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0U)
+        return;                            // 硬件发送FIFO满时跳过本帧，不阻塞FOC主循环
+
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &header, data) != HAL_OK)
+        return;                            // 提交失败时不等待重试，HAL_OK也仅表示已提交发送
 }
 
 // 将int16按小端格式放入两个字节
