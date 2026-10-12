@@ -67,4 +67,5 @@ HAL_StatusTypeDef FOC_ENCODER_CalibrateElectricalOffsetSamples(
     float align_angle,
     const float *angle_samples,
     uint8_t sample_count);
+
 #endif

@@ -16,11 +16,8 @@ FOC_Motor_HandleTypeDef foc_motor = {
   .motor_state = FOC_STATE_STOPPED
 };
 
-#define FOC_IDLE_TELEMETRY_PERIOD_MS 10U
-
 static uint32_t bus_voltage_last_tick;
 static uint8_t current_offset_valid;
-static uint32_t idle_telemetry_last_tick;
 static uint32_t alignment_start_tick;
 static uint32_t alignment_sample_last_tick;
 static uint32_t alignment_release_start_tick;
@@ -61,7 +58,6 @@ void FOC_Motor_Stop(void)
   foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
   foc_motor.encoder.speed = 0.0f; // 停机时清除测速滤波历史，避免下一次启动残留上次反馈
   foc_motor.encoder.speed_raw = 0.0f;
-  idle_telemetry_last_tick = HAL_GetTick();
   FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.encoder.angle_m);
   FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
 }
@@ -106,61 +102,61 @@ void FOC_Motor_Start(void)
 }
 
 /**
- * @brief  分时采样编码器，撤掉对齐电压并等待释放后启动闭环
+ * @brief  等待对齐释放，复位控制器并启动闭环
  */
-static void FOC_Motor_ProcessAlignment(void)
+static void FOC_Motor_HandleAlignRelease(void)
 {
   uint32_t now = HAL_GetTick();
 
-  if (foc_motor.motor_state == FOC_STATE_ALIGN_RELEASE)
+  if (foc_motor.bus_voltage.voltage <= 0.0f ||
+      (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
   {
-    if (foc_motor.bus_voltage.voltage <= 0.0f ||
-        (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
-    {
-      FOC_Motor_Stop();
-      return;
-    }
-    if ((uint32_t)(now - alignment_release_start_tick) < ENCODER_ALIGN_RELEASE_TIME_MS)
-    {
-      return;
-    }
-
-    // 转子释放后重新同步角度与测速历史，避免首次速度反馈跳变。
-    FOC_ENCODER_UpdateAngle(&foc_motor.encoder);
-    foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
-    foc_motor.encoder.speed = 0.0f;
-    foc_motor.encoder.speed_raw = 0.0f; // 对齐释放后同步清零原始测速与滤波反馈
-    foc_motor.loop_spd.speed_fbk = 0.0f;
-    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, 0.0f);
-    FOC_LOOP_CUR_SetReference(&foc_motor.loop_cur, 0.0f, 0.0f);
-    FOC_PI_Reset(&foc_motor.loop_cur.pi_id);
-    FOC_PI_Reset(&foc_motor.loop_cur.pi_iq);
-    FOC_PI_Reset(&foc_motor.loop_spd.pi_spd);
-    FOC_PI_Reset(&foc_motor.loop_pos.pi_pos);
-    FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.encoder.angle_m);
-    FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
-
-    // 控制器归零后启动ADC电流环与TIM6；成功后才设置启动速度目标。
-    if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
-        HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
-        HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK ||
-        HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
-    {
-      FOC_Motor_Stop();
-      return;
-    }
-    if (FOC_VOFA_GetControlMode() == FOC_CONTROL_SPEED)
-    {
-      FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, MOTOR_START_SPEED_RPM);
-    }
-    foc_motor.motor_state = FOC_STATE_RUNNING;
+    FOC_Motor_Stop();
     return;
   }
-
-  if (foc_motor.motor_state != FOC_STATE_ALIGNING)
+  if ((uint32_t)(now - alignment_release_start_tick) < ENCODER_ALIGN_RELEASE_TIME_MS)
   {
     return;
   }
+
+  // 转子释放后重新同步角度与测速历史，避免首次速度反馈跳变。
+  FOC_ENCODER_UpdateAngle(&foc_motor.encoder);
+  foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
+  foc_motor.encoder.speed = 0.0f;
+  foc_motor.encoder.speed_raw = 0.0f; // 对齐释放后同步清零原始测速与滤波反馈
+  foc_motor.loop_spd.speed_fbk = 0.0f;
+  FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, 0.0f);
+  FOC_LOOP_CUR_SetReference(&foc_motor.loop_cur, 0.0f, 0.0f);
+  FOC_PI_Reset(&foc_motor.loop_cur.pi_id);
+  FOC_PI_Reset(&foc_motor.loop_cur.pi_iq);
+  FOC_PI_Reset(&foc_motor.loop_spd.pi_spd);
+  FOC_PI_Reset(&foc_motor.loop_pos.pi_pos);
+  FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.encoder.angle_m);
+  FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
+
+  // 控制器归零后启动ADC电流环与TIM6；成功后才设置启动速度目标。
+  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
+      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK ||
+      HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+  {
+    FOC_Motor_Stop();
+    return;
+  }
+  if (FOC_VOFA_GetControlMode() == FOC_CONTROL_SPEED)
+  {
+    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, MOTOR_START_SPEED_RPM);
+  }
+  foc_motor.motor_state = FOC_STATE_RUNNING;
+}
+
+/**
+ * @brief  保持固定磁场，采集编码器角度并计算电角度偏置
+ */
+static void FOC_Motor_HandleAligning(void)
+{
+  uint32_t now = HAL_GetTick();
+
   if (foc_motor.bus_voltage.voltage <= 0.0f ||
       (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
   {
@@ -202,6 +198,24 @@ static void FOC_Motor_ProcessAlignment(void)
   FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
   alignment_release_start_tick = now;
   foc_motor.motor_state = FOC_STATE_ALIGN_RELEASE;
+}
+
+/**
+ * @brief  按当前状态推进对齐，每次只处理一个阶段
+ */
+static void FOC_Motor_ProcessAlignment(void)
+{
+  switch (foc_motor.motor_state)
+  {
+    case FOC_STATE_ALIGNING:
+      FOC_Motor_HandleAligning();
+      break;
+    case FOC_STATE_ALIGN_RELEASE:
+      FOC_Motor_HandleAlignRelease();
+      break;
+    default:
+      break;
+  }
 }
 
 /**
@@ -294,35 +308,30 @@ void FOC_Motor_Init(void)
     Error_Handler();
   }
   foc_motor.encoder.spd_last_count = __HAL_TIM_GET_COUNTER(&htim3);
-  idle_telemetry_last_tick = HAL_GetTick();
 }
 
 /**
- * @brief  在主循环中推进低频任务和非阻塞对齐流程
+ * @brief  每10ms更新一次母线电压
+ */
+static void FOC_Motor_UpdateBusVoltage(void)
+{
+  uint32_t now = HAL_GetTick();
+  if ((uint32_t)(now - bus_voltage_last_tick) < 10U)
+  {
+    return;
+  }
+  bus_voltage_last_tick = now;
+  FOC_BUS_VOLTAGE_Update(&foc_motor.bus_voltage);
+}
+
+/**
+ * @brief  在主循环中依次推进母线采样、按键、对齐及通信
  */
 void FOC_Motor_Task(void)
 {
-  // 母线电压每10ms采样一次；通信打包和命令解析都在主循环中执行。
-  uint32_t now = HAL_GetTick();
-  if ((uint32_t)(now - bus_voltage_last_tick) >= 10U)
-  {
-    bus_voltage_last_tick = now;
-    FOC_BUS_VOLTAGE_Update(&foc_motor.bus_voltage);
-  }
+  FOC_Motor_UpdateBusVoltage();
   FOC_KEY_Task();
   FOC_Motor_ProcessAlignment();
-  now = HAL_GetTick();
-  uint32_t elapsed_ms = (uint32_t)(now - idle_telemetry_last_tick);
-  if (foc_motor.motor_state != FOC_STATE_RUNNING &&
-      elapsed_ms >= FOC_IDLE_TELEMETRY_PERIOD_MS)
-  {
-    idle_telemetry_last_tick = now;
-    FOC_ENCODER_UpdateAngle(&foc_motor.encoder);   // 停机时手动转动转子，也能更新CAN和VOFA的实际机械角
-    FOC_ENCODER_UpdateSpeed(&foc_motor.encoder, (float)elapsed_ms * 0.001f);
-    foc_motor.loop_spd.speed_fbk = foc_motor.encoder.speed;
-    // 停机时由主循环请求遥测；运行时由ADC回调分频请求。
-    FOC_VOFA_RequestTelemetry();
-  }
   FOC_VOFA_ProcessTx();
   FOC_VOFA_ProcessRx();
 }
