@@ -3,7 +3,8 @@
 
 #include "bsp_XL9555.h"
 #include "bsp_lcd.h"
-#include "motor_ui.h"
+#include "Ui_speed.h"
+#include "Ui_position.h"
 #include "comm_can.h"
 #include "bsp_touch.h"
 #include "esp_log.h"
@@ -15,7 +16,8 @@ void app_main(void)
     lv_display_t *display = bsp_lcd_init();              // 初始化LCD和LVGL
     ESP_ERROR_CHECK(comm_can_init());                    // 初始化CAN控制器
     lvgl_port_lock(0);   // 获取LVGL锁
-    motor_ui_create(display);   // 创建速度控制页面
+    UI_Position_Create(display);   // 先创建位置页面，供共用接收定时器更新
+    UI_Speed_Create(display);   // 创建速度页面及50ms接收定时器，上电默认显示速度页面
     if (touch_ret == ESP_OK)
     {
         touch_ret = BSP_touch_register_lvgl(display);   // 注册触摸输入设备

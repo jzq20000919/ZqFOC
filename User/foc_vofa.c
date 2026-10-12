@@ -3,11 +3,13 @@
  * @brief   VOFA+遥测发送与命令处理
  */
 #include "foc_vofa.h"
+#include "foc_manager.h"   // 串口START/STOP复用现有电机启停函数
 #include "motor_param.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#define VOFA_TX_FRAME_SIZE   36U // 8个float及JustFloat帧尾，总字节数
+#define VOFA_TX_CHANNELS     10U // 原有8个通道不变，追加目标角度和实际角度
+#define VOFA_TX_FRAME_SIZE   (VOFA_TX_CHANNELS * 4U + 4U) // 10个float及JustFloat帧尾，共44字节
 #define VOFA_COMMAND_SIZE    32U // 单条ASCII命令缓冲区长度，字节
 static UART_HandleTypeDef *vofa_uart;
 static FOC_ENCODER_HandleTypeDef *vofa_encoder;
@@ -75,11 +77,15 @@ static void FOC_VOFA_ExecuteCommand(const char *command)
     {
         FOC_VOFA_SwitchToPosition();
     }
+    else if (strcmp(command, "START") == 0)
+    {
+        FOC_Motor_Start();   // 保留原有对齐流程；位置操作先发MP，等待RUNNING后再设置角度
+    }
     else if (strcmp(command, "STOP") == 0)
     {
-        FOC_VOFA_SwitchToSpeed();
+        FOC_Motor_Stop();   // 真正关闭输出，避免仅设零速时位置环继续保持电机
     }
-    else if ((command[0] == 'S') || (command[0] == 'P'))
+    else if ((command[0] == 'S') || (command[0] == 'P') || (command[0] == 'A'))
     {
         value = strtof(&command[1], &end);
         if ((end == &command[1]) || (*end != '\0') || !isfinite(value))
@@ -87,7 +93,12 @@ static void FOC_VOFA_ExecuteCommand(const char *command)
             return;
         }
 
-        if (command[0] == 'P')
+        if (command[0] == 'A')
+        {
+            value = fmodf(value, 360.0f) * FOC_PI / 180.0f;   // A90表示90度，先归一化再换算为库函数使用的rad
+            FOC_VOFA_SetControlMode(FOC_CONTROL_POSITION);   // 角度命令自动选择位置模式
+        }
+        else if (command[0] == 'P')
         {
             /* 位置模块按单圈角度工作，先取余以免超大输入反复减 2π。 */
             value = fmodf(value, FOC_TWO_PI);
@@ -133,6 +144,13 @@ FOC_CONTROL_MODE FOC_VOFA_GetControlMode(void)
     return control_mode;
 }
 
+void FOC_VOFA_SetControlMode(FOC_CONTROL_MODE mode)
+{
+    if (mode == control_mode) return;   // UI重复发送相同模式时不把正在使用的目标清零
+    if (mode == FOC_CONTROL_SPEED) FOC_VOFA_SwitchToSpeed();
+    else if (mode == FOC_CONTROL_POSITION) FOC_VOFA_SwitchToPosition();   // 先保持当前位置，再接受新目标
+}
+
 void FOC_VOFA_RequestTelemetry(void)
 {
     telemetry_pending = 1U;
@@ -151,22 +169,24 @@ void FOC_VOFA_ProcessTx(void)
         return; // DMA忙时丢弃本帧，避免等待影响FOC。
     }
 
-    // 先读取8个状态值，再按JustFloat顺序打包。
+    // 保留原有CH0～CH7，追加两个角度通道；DMA忙时仍直接跳过，不阻塞FOC。
     const volatile FOC_LOOP_SPD_HandleTypeDef *spd = vofa_loop_spd;
     const volatile FOC_LOOP_CUR_HandleTypeDef *cur = vofa_loop_cur;
-    const float values[8] = {
+    const float values[VOFA_TX_CHANNELS] = {
         spd->speed_ref, spd->speed_fbk, cur->id_ref, cur->i_d,
-        cur->iq_ref, cur->i_q, cur->v_d, cur->v_q
+        cur->iq_ref, cur->i_q, cur->v_d, cur->v_q,
+        vofa_loop_pos->position_ref * 180.0f / FOC_PI,   // CH8：目标单圈机械角，度
+        vofa_encoder->angle_m * 180.0f / FOC_PI          // CH9：实际单圈机械角，度
     };
-    for (uint8_t i = 0U; i < 8U; ++i)
+    for (uint8_t i = 0U; i < VOFA_TX_CHANNELS; ++i)
     {
         memcpy(&tx_buffer[i * 4U], &values[i], sizeof(float));
     }
     // JustFloat帧尾：00 00 80 7F。
-    tx_buffer[32] = 0x00U;
-    tx_buffer[33] = 0x00U;
-    tx_buffer[34] = 0x80U;
-    tx_buffer[35] = 0x7FU;
+    tx_buffer[VOFA_TX_FRAME_SIZE - 4U] = 0x00U;
+    tx_buffer[VOFA_TX_FRAME_SIZE - 3U] = 0x00U;
+    tx_buffer[VOFA_TX_FRAME_SIZE - 2U] = 0x80U;
+    tx_buffer[VOFA_TX_FRAME_SIZE - 1U] = 0x7FU;
 
     if (HAL_UART_Transmit_DMA(vofa_uart, tx_buffer, VOFA_TX_FRAME_SIZE) == HAL_OK)
     {

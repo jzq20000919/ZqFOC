@@ -1,4 +1,5 @@
-#include "motor_ui.h"
+#include "Ui_speed.h"
+#include "Ui_position.h"   // 页面切换与位置反馈显示接口
 #include "comm_can.h"   // CAN通信接口
 #include "esp_log.h"    // ESP-IDF日志输出
 #include <stdio.h>   // 提供snprintf字符串格式化函数
@@ -41,12 +42,25 @@ static void UI_SpeedSliderSendEvent(lv_event_t *event)
 {
     (void)event;   // 不使用事件参数
 
-    esp_err_t ret = comm_can_send_command(CAN_CMD_SET_SPEED, (uint16_t)(int16_t)target_speed_rpm);   // 发送目标速度
+    esp_err_t ret = comm_can_send_command(CAN_CMD_SET_MODE, CAN_MODE_SPEED);   // 松开滑块时先明确选择速度模式
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE("SPEED_UI", "Set mode request failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    ret = comm_can_send_command(CAN_CMD_SET_SPEED, (uint16_t)(int16_t)target_speed_rpm);   // 发送目标速度
 
     if (ret != ESP_OK)
     {
         ESP_LOGE("MOTOR_UI", "Set speed request failed: %s", esp_err_to_name(ret));   // 仅表示发送请求未提交成功
     }
+}
+
+/* ==================== 切换到位置页面 ==================== */
+static void UI_PositionButtonEvent(lv_event_t *event)
+{
+    (void)event;
+    UI_Position_Show();   // 只切换显示；START或滑块发送时才选择电机控制模式
 }
 /* ==================== START按钮事件 ==================== */
 static void UI_StartButtonEvent(lv_event_t *event)
@@ -210,6 +224,20 @@ motor_state_label = lv_label_create(speed_screen);   // 创建运行状态标签
 lv_label_set_text(motor_state_label, "Motor: UNKNOWN");   // 初始状态未知
 lv_obj_set_pos(motor_state_label, 8, 215);   // 放在信息卡片下方
 lv_obj_set_style_text_color(motor_state_label, lv_color_hex(UI_COLOR_DIM), 0);   // 设置文字颜色
+lv_obj_set_width(motor_state_label, 200);   // 给右侧页面切换按钮留出位置
+lv_label_set_long_mode(motor_state_label, LV_LABEL_LONG_CLIP);
+
+lv_obj_t *position_button = lv_button_create(speed_screen);   // 保留原页面布局，在页脚增加入口
+lv_obj_set_size(position_button, 98, 24);
+lv_obj_set_style_pad_all(position_button, 0, 0);   // 小按钮取消主题默认内边距，避免文字裁切
+lv_obj_set_pos(position_button, 216, 211);
+lv_obj_set_style_bg_color(position_button, lv_color_hex(UI_COLOR_BLUE), 0);
+lv_obj_set_style_border_width(position_button, 0, 0);
+lv_obj_set_style_radius(position_button, 5, 0);
+lv_obj_t *position_label = lv_label_create(position_button);
+lv_label_set_text(position_label, "POSITION");
+lv_obj_center(position_label);
+lv_obj_add_event_cb(position_button, UI_PositionButtonEvent, LV_EVENT_CLICKED, NULL);
 
 }
 
@@ -222,9 +250,11 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
     CAN_Status_t status;       // 解析后的电机状态
     CAN_Current_t current;   // 保存解析后的电流数据
     CAN_Speed_t speed;   // 解析后的速度数据
+    CAN_Position_t position;   // 单圈角度反馈，单位0.01度
     bool status_updated = false;   // 同类报文只保留本轮最后一条有效结果
     bool speed_updated = false;
     bool current_updated = false;
+    bool position_updated = false;
     for (uint32_t i = 0; i < UI_CAN_RX_MAX_PER_TICK && comm_can_receive(&message); i++)   // 限制本次读取数量
     {
         if (comm_can_parse_status(&message, &status))
@@ -239,8 +269,12 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
         {
             current_updated = true;
         }
+        else if (comm_can_parse_position(&message, &position))
+        {
+            position_updated = true;
+        }
     }
-    if (status_updated || speed_updated || current_updated)
+    if (status_updated || speed_updated || current_updated || position_updated)
     {
         can_last_rx_tick = lv_tick_get();   // 只有协议校验通过的报文才能刷新接收时间
         if (!can_online)
@@ -248,6 +282,7 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
             can_online = true;
             lv_label_set_text(can_status_label, "CAN: RX OK");   // 有效反馈到达后自动恢复
             lv_obj_set_style_text_color(can_status_label, lv_color_hex(UI_COLOR_GREEN), 0);
+            UI_Position_SetCanOnline(true);   // 两页使用同一个接收时间和在线状态
         }
     }
     if (can_online && lv_tick_elaps(can_last_rx_tick) >= UI_CAN_TIMEOUT_MS)
@@ -255,9 +290,11 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
         can_online = false;
         lv_label_set_text(can_status_label, "CAN: OFFLINE");   // 无有效报文时回落到离线
         lv_obj_set_style_text_color(can_status_label, lv_color_hex(UI_COLOR_DIM), 0);
+        UI_Position_SetCanOnline(false);
     }
     if (status_updated)
     {
+        UI_Position_UpdateStatus(&status);
         switch (status.state)
         {
             case CAN_STATE_STOPPED:
@@ -286,6 +323,7 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
     }
     if (current_updated)
     {
+        UI_Position_UpdateCurrent(&current);
         char iq_text[64];   // 保存Iq显示字符串
         char id_text[64];   // 保存Id显示字符串
         snprintf(iq_text, sizeof(iq_text), "Iq:%.2f/%.2f", (double)current.iq_ref, (double)current.iq);   // 目标/实际，完整范围为-327.68~327.67 A
@@ -293,10 +331,20 @@ static void UI_CanReceiveTimer(lv_timer_t *timer)
         lv_label_set_text(iq_info_label, iq_text);   // 更新Iq标签
         lv_label_set_text(id_info_label, id_text);   // 更新Id标签
     }
+    if (position_updated)
+    {
+        UI_Position_UpdatePosition(&position);
+    }
 }
-void motor_ui_create(lv_display_t *display)
+/* ==================== 速度页面公开接口 ==================== */
+void UI_Speed_Show(void)
 {
-    if (display == NULL) return;   // 防止传入无效显示器
+    if (speed_screen != NULL) lv_screen_load(speed_screen);   // 页面只创建一次，切换时保留滑块目标
+}
+
+void UI_Speed_Create(lv_display_t *display)
+{
+    if (display == NULL || speed_screen != NULL) return;   // 防止无效显示器及重复创建定时器
     lv_display_set_default(display);   // 设置当前默认显示器
     UI_Create_SpeedScreen();   // 创建速度控制页面
     lv_screen_load(speed_screen);   // 显示速度控制页面

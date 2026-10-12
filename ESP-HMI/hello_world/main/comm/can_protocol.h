@@ -49,6 +49,7 @@ typedef enum
 #define CAN_PARAM_H_INDEX   2U   // Byte2：参数高8位
 /* ==================== 参数单位 ==================== */
 #define CAN_SPEED_UNIT_RPM  1U     // 速度参数单位：1 rpm
-#define CAN_POSITION_SCALE  100U   // 位置参数：1°对应100个计数
+#define CAN_POSITION_SCALE  100U   // 0x03位置命令：Byte1/2为uint16小端；1度对应100，合法范围0～35999
+#define CAN_POSITION_FULL_CIRCLE 36000U   // 单圈360度；不可按int16解释，否则大于327.67度会变负数
 #define CAN_CURRENT_SCALE  100.0f   // 电流传输放大100倍，分辨率0.01A
 #endif /* CAN_PROTOCOL_H */

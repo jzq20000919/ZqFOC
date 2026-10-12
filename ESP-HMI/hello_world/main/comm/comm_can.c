@@ -165,6 +165,19 @@ bool comm_can_parse_speed(const CAN_RxMessage_t *message, CAN_Speed_t *speed)
 
     return true;   // 解析成功
 }
+/* ==================== CAN位置报文解析 ==================== */
+bool comm_can_parse_position(const CAN_RxMessage_t *message, CAN_Position_t *position)
+{
+    if (message == NULL || position == NULL) return false;   // 检查参数，避免空指针
+    if (message->id != CAN_ID_POSITION || message->d_length != CAN_FRAME_DLC) return false;
+    uint16_t actual = (uint16_t)message->data[0] | ((uint16_t)message->data[1] << 8);   // Byte0/1：实际角度
+    uint16_t target = (uint16_t)message->data[2] | ((uint16_t)message->data[3] << 8);   // Byte2/3：目标角度
+    if (actual >= CAN_POSITION_FULL_CIRCLE || target >= CAN_POSITION_FULL_CIRCLE) return false;   // 只接受单圈角度
+    position->actual_position_cdeg = actual;
+    position->target_position_cdeg = target;
+    return true;
+}
+
 /* ==================== CAN控制器初始化 ==================== */
 esp_err_t comm_can_init(void)
 {

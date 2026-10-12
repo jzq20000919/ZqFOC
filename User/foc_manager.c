@@ -314,6 +314,7 @@ void FOC_Motor_Task(void)
       elapsed_ms >= FOC_IDLE_TELEMETRY_PERIOD_MS)
   {
     idle_telemetry_last_tick = now;
+    FOC_ENCODER_UpdateAngle(&foc_motor.encoder);   // 停机时手动转动转子，也能更新CAN和VOFA的实际机械角
     FOC_ENCODER_UpdateSpeed(&foc_motor.encoder, (float)elapsed_ms * 0.001f);
     foc_motor.loop_spd.speed_fbk = foc_motor.encoder.speed;
     // 停机时由主循环请求遥测；运行时由ADC回调分频请求。

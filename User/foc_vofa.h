@@ -39,6 +39,8 @@ HAL_StatusTypeDef FOC_VOFA_Init(UART_HandleTypeDef *uart,
  * @return 当前速度或位置控制模式
  */
 FOC_CONTROL_MODE FOC_VOFA_GetControlMode(void);
+/** @brief 由主循环选择速度/位置模式；CAN与串口复用原有切换逻辑，相同模式不清除目标。 */
+void FOC_VOFA_SetControlMode(FOC_CONTROL_MODE mode);
 /**
  * @brief  标记需要发送一帧遥测数据
  * @note   可由电流环中断或停机时的主循环调用；打包和DMA发送均在主循环中进行。

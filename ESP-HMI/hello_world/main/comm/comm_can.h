@@ -31,8 +31,16 @@ typedef struct
     int16_t actual_speed_rpm;   // 电机实际转速
     int16_t target_speed_rpm;   // 电机目标转速
 } CAN_Speed_t;
+/* ==================== 电机单圈位置信息 ==================== */
+typedef struct
+{
+    uint16_t actual_position_cdeg;   // 实际机械角度，0～35999表示0～359.99度
+    uint16_t target_position_cdeg;   // STM32正在使用的目标机械角度，单位0.01度
+} CAN_Position_t;
 bool comm_can_receive(CAN_RxMessage_t *message);   // 从接收队列中取出一条报文
 bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status);   // 解析电机状态报文
 bool comm_can_parse_current(const CAN_RxMessage_t *message, CAN_Current_t *current);   // 解析电流报文
 bool comm_can_parse_speed(const CAN_RxMessage_t *message, CAN_Speed_t *speed);   // 解析速度报文
+/** @brief 解析0x181标准8字节位置反馈；Byte0/1为实际角度，Byte2/3为目标角度，均为uint16小端。 */
+bool comm_can_parse_position(const CAN_RxMessage_t *message, CAN_Position_t *position);
 #endif /* COMM_CAN_H */

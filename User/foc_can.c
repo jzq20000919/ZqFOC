@@ -1,6 +1,8 @@
 #include "foc_can.h"
 #include "fdcan.h"
 #include "foc_manager.h"
+#include "foc_vofa.h"   // 复用现有控制模式选择，不建立第二套模式状态
+#define CAN_POSITION_FULL_CIRCLE 36000U   // uint16单圈角度：0～35999，单位0.01度
 volatile uint32_t foc_can_rx_count = 0U;     // 成功接收的报文数量
 volatile uint8_t foc_can_rx_data[8] = {0};  // 最近一次收到的8字节数据
 HAL_StatusTypeDef FOC_CAN_Init(void)
@@ -33,7 +35,9 @@ void FOC_CAN_ProcessRx(void)
     uint8_t data[64] = {0};                 // HAL先按DLC复制数据，预留最大帧长度，避免校验前越界
 
     static int16_t target_speed = 0;
+    static uint16_t target_position = 0;   // 位置参数不能按int16解析，359.99度大于327.67度
     static uint8_t start_pending = 0;
+    static FOC_CONTROL_MODE pending_mode = FOC_CONTROL_SPEED;   // 待对齐结束后应用的目标所属模式
 
     // 读取硬件FIFO中的全部消息
     while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) > 0U)
@@ -62,15 +66,39 @@ void FOC_CAN_ProcessRx(void)
         switch (data[0])
         {
             case 0x01:  // SET_MODE
-                // 初版只有速度模式，无需切换
+                if (raw <= (uint16_t)FOC_CONTROL_POSITION)
+                {
+                    if ((FOC_CONTROL_MODE)raw != FOC_VOFA_GetControlMode()) start_pending = 0;   // 切换模式后不再执行旧模式目标
+                    FOC_VOFA_SetControlMode((FOC_CONTROL_MODE)raw);
+                }
                 break;
 
             case 0x02:  // SET_SPEED
+                if (FOC_VOFA_GetControlMode() != FOC_CONTROL_SPEED) break;   // 位置模式的速度目标由位置环计算
                 target_speed = (int16_t)raw;
 
                 if (foc_motor.motor_state == FOC_STATE_RUNNING)
                 {
                     FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
+                }
+                else if (foc_motor.motor_state != FOC_STATE_STOPPED)
+                {
+                    start_pending = 1;   // 对齐中收到新目标，在RUNNING后应用
+                    pending_mode = FOC_CONTROL_SPEED;
+                }
+                break;
+
+            case 0x03:  // SET_POSITION
+                if (FOC_VOFA_GetControlMode() != FOC_CONTROL_POSITION || raw >= CAN_POSITION_FULL_CIRCLE) break;
+                target_position = raw;   // Byte1/2是无符号小端角度×100，不是rad
+                if (foc_motor.motor_state == FOC_STATE_RUNNING)
+                {
+                    FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, (float)target_position * FOC_PI / 18000.0f);   // 0.01度换算为rad
+                }
+                else if (foc_motor.motor_state != FOC_STATE_STOPPED)
+                {
+                    start_pending = 1;
+                    pending_mode = FOC_CONTROL_POSITION;
                 }
                 break;
 
@@ -80,13 +108,17 @@ void FOC_CAN_ProcessRx(void)
                     FOC_Motor_Start();
 
                     if (foc_motor.motor_state != FOC_STATE_STOPPED)
+                    {
                         start_pending = 1;
+                        pending_mode = FOC_VOFA_GetControlMode();
+                    }
                 }
                 break;
 
             case 0x05:  // STOP
                 start_pending = 0;
                 target_speed = 0;
+                target_position = 0;
                 FOC_Motor_Stop();
                 break;
 
@@ -95,12 +127,18 @@ void FOC_CAN_ProcessRx(void)
         }
     }
 
-    // 对齐完成后，再应用ESP32发送的目标速度
+    // 对齐会重新同步速度/位置目标，只有进入RUNNING后才应用ESP32缓存的目标。
     if (start_pending)
     {
         if (foc_motor.motor_state == FOC_STATE_RUNNING)
         {
-            FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
+            if (pending_mode == FOC_VOFA_GetControlMode())   // 串口切换到另一模式时，不执行旧的CAN启动目标
+            {
+                if (pending_mode == FOC_CONTROL_SPEED)
+                    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
+                else
+                    FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, (float)target_position * FOC_PI / 18000.0f);
+            }
 
             start_pending = 0;
         }
@@ -138,38 +176,52 @@ static void CAN_PutInt16(uint8_t *data, int16_t value)
     data[1] = (uint8_t)((uint16_t)value >> 8);
 }
 
+/* ==================== 单圈角度打包 ==================== */
+static void CAN_PutAngle(uint8_t *data, float angle_rad)
+{
+    uint16_t angle = (uint16_t)(angle_rad * 18000.0f / FOC_PI + 0.5f);   // rad转换为角度×100，四舍五入到0.01度
+    if (angle >= CAN_POSITION_FULL_CIRCLE) angle = 0U;   // 359.995度舍入到360度时回到单圈零点
+    data[0] = (uint8_t)angle;   // 使用uint16，保持大于327.67度的角度仍为正数
+    data[1] = (uint8_t)(angle >> 8);
+}
+
 void FOC_CAN_SendFeedback(void)
 {
     static uint32_t last_tick = 0;
+    static uint8_t feedback_index = 0;   // 仅选择本次反馈类型，不缓存报文、不建立软件FIFO
     uint32_t now = HAL_GetTick();
 
-    // 每100ms发送一次
-    if ((uint32_t)(now - last_tick) < 100U)
+    // 硬件发送FIFO只有3个槽；四类反馈分散发送，避免同时提交4帧使最后一类一直被跳过。
+    if ((uint32_t)(now - last_tick) < 25U)
         return;
 
     last_tick = now;
-
-    // 1. 电机状态：0x180
-    uint8_t status[8] = {0};
-    status[0] = (uint8_t)foc_motor.motor_state;
-    status[1] = 0;  // 速度模式
-    FOC_CAN_Send(0x180U, status);
-
-    // 2. 电流：0x182，放大100倍
-    uint8_t current[8] = {0};
-
-    CAN_PutInt16(&current[0], (int16_t)(foc_motor.loop_cur.iq_ref * 100.0f));
-    CAN_PutInt16(&current[2], (int16_t)(foc_motor.loop_cur.i_q * 100.0f));
-    CAN_PutInt16(&current[4], (int16_t)(foc_motor.loop_cur.id_ref * 100.0f));
-    CAN_PutInt16(&current[6], (int16_t)(foc_motor.loop_cur.i_d * 100.0f));
-
-    FOC_CAN_Send(0x182U, current);
-
-    // 3. 速度：0x183，单位rpm
-    uint8_t speed[8] = {0};
-
-    CAN_PutInt16(&speed[0], (int16_t)foc_motor.loop_spd.speed_fbk);
-    CAN_PutInt16(&speed[2], (int16_t)foc_motor.loop_spd.speed_ref);
-
-    FOC_CAN_Send(0x183U, speed);
+    uint8_t data[8] = {0};   // HAL立即复制到硬件消息RAM，函数返回后不再使用此数组
+    switch (feedback_index)
+    {
+        case 0:   // 0x180：Byte0状态、Byte1模式，余下字节为0
+            data[0] = (uint8_t)foc_motor.motor_state;
+            data[1] = (uint8_t)FOC_VOFA_GetControlMode();
+            FOC_CAN_Send(0x180U, data);
+            break;
+        case 1:   // 0x181：实际角度、目标角度，uint16小端，单位0.01度
+            CAN_PutAngle(&data[0], foc_motor.encoder.angle_m);
+            CAN_PutAngle(&data[2], foc_motor.loop_pos.position_ref);
+            FOC_CAN_Send(0x181U, data);
+            break;
+        case 2:   // 0x182：Iq_ref、Iq、Id_ref、Id，int16小端，电流×100
+            CAN_PutInt16(&data[0], (int16_t)(foc_motor.loop_cur.iq_ref * 100.0f));
+            CAN_PutInt16(&data[2], (int16_t)(foc_motor.loop_cur.i_q * 100.0f));
+            CAN_PutInt16(&data[4], (int16_t)(foc_motor.loop_cur.id_ref * 100.0f));
+            CAN_PutInt16(&data[6], (int16_t)(foc_motor.loop_cur.i_d * 100.0f));
+            FOC_CAN_Send(0x182U, data);
+            break;
+        case 3:   // 0x183：实际速度、目标速度，int16小端，单位rpm
+            CAN_PutInt16(&data[0], (int16_t)foc_motor.loop_spd.speed_fbk);
+            CAN_PutInt16(&data[2], (int16_t)foc_motor.loop_spd.speed_ref);
+            FOC_CAN_Send(0x183U, data);
+            break;
+        default: break;
+    }
+    feedback_index = (uint8_t)((feedback_index + 1U) % 4U);   // 每类正常反馈周期100ms，发送满时不阻塞重试
 }
