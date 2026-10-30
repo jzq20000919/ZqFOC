@@ -56,7 +56,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/foc_loop_cur.c
     User/foc_loop_spd.c
     User/foc_loop_pos.c
-    User/foc_vofa.c
+    User/foc_comm_usart.c
     User/foc_key.c
 )
 

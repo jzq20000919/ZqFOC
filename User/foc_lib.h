@@ -17,7 +17,7 @@
 #include "foc_loop_cur.h"
 #include "foc_loop_spd.h"
 #include "foc_loop_pos.h"
-#include "foc_vofa.h"
+#include "foc_comm_usart.h"
 
 
 #endif // FOC_LIB_H

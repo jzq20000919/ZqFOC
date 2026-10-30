@@ -1,7 +1,7 @@
 #include "foc_can.h"
 #include "fdcan.h"
 #include "foc_manager.h"
-#include "foc_vofa.h"   // 复用现有控制模式选择，不建立第二套模式状态
+#include "foc_comm_usart.h"   // 复用现有控制模式选择，不建立第二套模式状态
 #define CAN_POSITION_FULL_CIRCLE 36000U   // uint16单圈角度：0～35999，单位0.01度
 volatile uint32_t foc_can_rx_count = 0U;     // 成功接收的报文数量
 volatile uint8_t foc_can_rx_data[8] = {0};  // 最近一次收到的8字节数据
@@ -68,13 +68,13 @@ void FOC_CAN_ProcessRx(void)
             case 0x01:  // SET_MODE
                 if (raw <= (uint16_t)FOC_CONTROL_POSITION)
                 {
-                    if ((FOC_CONTROL_MODE)raw != FOC_VOFA_GetControlMode()) start_pending = 0;   // 切换模式后不再执行旧模式目标
-                    FOC_VOFA_SetControlMode((FOC_CONTROL_MODE)raw);
+                    if ((FOC_CONTROL_MODE)raw != FOC_COMM_USART_GetControlMode()) start_pending = 0;   // 切换模式后不再执行旧模式目标
+                    FOC_COMM_USART_SetControlMode((FOC_CONTROL_MODE)raw);
                 }
                 break;
 
             case 0x02:  // SET_SPEED
-                if (FOC_VOFA_GetControlMode() != FOC_CONTROL_SPEED) break;   // 位置模式的速度目标由位置环计算
+                if (FOC_COMM_USART_GetControlMode() != FOC_CONTROL_SPEED) break;   // 位置模式的速度目标由位置环计算
                 target_speed = (int16_t)raw;
 
                 if (foc_motor.motor_state == FOC_STATE_RUNNING)
@@ -89,7 +89,7 @@ void FOC_CAN_ProcessRx(void)
                 break;
 
             case 0x03:  // SET_POSITION
-                if (FOC_VOFA_GetControlMode() != FOC_CONTROL_POSITION || raw >= CAN_POSITION_FULL_CIRCLE) break;
+                if (FOC_COMM_USART_GetControlMode() != FOC_CONTROL_POSITION || raw >= CAN_POSITION_FULL_CIRCLE) break;
                 target_position = raw;   // Byte1/2是无符号小端角度×100，不是rad
                 if (foc_motor.motor_state == FOC_STATE_RUNNING)
                 {
@@ -110,7 +110,7 @@ void FOC_CAN_ProcessRx(void)
                     if (foc_motor.motor_state != FOC_STATE_STOPPED)
                     {
                         start_pending = 1;
-                        pending_mode = FOC_VOFA_GetControlMode();
+                        pending_mode = FOC_COMM_USART_GetControlMode();
                     }
                 }
                 break;
@@ -132,7 +132,7 @@ void FOC_CAN_ProcessRx(void)
     {
         if (foc_motor.motor_state == FOC_STATE_RUNNING)
         {
-            if (pending_mode == FOC_VOFA_GetControlMode())   // 串口切换到另一模式时，不执行旧的CAN启动目标
+            if (pending_mode == FOC_COMM_USART_GetControlMode())   // 串口切换到另一模式时，不执行旧的CAN启动目标
             {
                 if (pending_mode == FOC_CONTROL_SPEED)
                     FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
@@ -201,7 +201,7 @@ void FOC_CAN_SendFeedback(void)
     {
         case 0:   // 0x180：Byte0状态、Byte1模式，余下字节为0
             data[0] = (uint8_t)foc_motor.motor_state;
-            data[1] = (uint8_t)FOC_VOFA_GetControlMode();
+            data[1] = (uint8_t)FOC_COMM_USART_GetControlMode();
             FOC_CAN_Send(0x180U, data);
             break;
         case 1:   // 0x181：实际角度、目标角度，uint16小端，单位0.01度

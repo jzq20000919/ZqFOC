@@ -1,4 +1,4 @@
-# 工程说明
+# STM32端
 ## 上电启动流程
 1. 初始化 HAL、时钟、GPIO、ADC、定时器、串口、CAN
 2. 初始化FOC的编码器、电流采样、母线电压、三环控制
@@ -81,7 +81,72 @@
 
 ## 流程控制
 while循环中不断运行FOC_Motor_Task，该函数为整个FOC的流程管理函数。
-1. 每一个while循环都运行一次母线电压采集更新，该函数会更新母线电压采集结构体中的母线电压值。
+1. 10ms都运行一次母线电压采集更新，该函数会更新母线电压采集结构体中的母线电压值。
 2. 每一个while循环都运行一次按键轮询扫描，处理按键的输入事件。
 3. 每一个while循环都执行一次FOC_Motor_ProcessAlignment检查，但只有第一次刚上电时才会执行对齐操作。
-4. 
+
+## 整体
+上电后运行初始化
+1. 初始化 HAL、时钟、GPIO、ADC、定时器、串口、CAN
+2. 初始化FOC的编码器、电流采样、母线电压、三环控制
+FOC的初始化由FOC_Motor_Init()函数完成。在这个函数中，初始化了按键、编码器、电流采样、母线电压采集以及三环控制。并对电流采样进行了校准。
+3. 初始化结束后，进入while循环进行 FOC 控制任务，在while循环中不断调用 FOC_Motor_Task() 函数，该函数会依次执行母线电压采集更新、按键轮询扫描、对齐处理以及通信处理。FOC_CAN_ProcessRx和FOC_CAN_SendFeedback 函数用于处理 CAN 通信的接收和发送。
+
+在FOC_Motor_Task中，当收到KEY按键或者VOFA或者CAN的启动指令时，会触发 FOC_Motor_Start() 函数，该函数会初始化电机控制状态，启动电流环、速度环和位置环，并设置初始参考值。然后进入FOC_STATE_ALIGNING状态。
+
+下一次 FOC_Motor_Task 循环中，电机将处于 FOC_STATE_ALIGNING 状态，通过FOC_Motor_HandleAligning执行对齐操作。
+对齐操作完成后，电机将进入 FOC_STATE_ALIGN_RELEASE 状态，通过FOC_Motor_HandleAlignRelease执行转子释放处理，该函数末尾，启动ADC和TIM6,也就是打开电流环和速度环。电机将进入 FOC_STATE_RUNNING 状态，开始正常的闭环控制。
+三环的中断回调都会检查是否处于 FOC_STATE_RUNNING 状态，只有在电机处于运行状态时才会执行相应的控制操作。
+## CAN通信
+一共三个函数，分别是 FOC_CAN_ProcessRx、FOC_CAN_SendFeedback 和 FOC_CAN_Init，用于处理 CAN 通信的接收、发送和初始化。
+### 初始化
+1. 用FDCAN类型的定义过滤器
+    FDCAN_FilterTypeDef filter = {0};说明我们用0号过滤器
+2. 然后定义过滤器的ID类型，11位标准ID（标准帧和扩展帧的区别？）
+3. 使用掩码匹配（什么是掩码匹配）
+4. 匹配的消息放入FIFO
+5. 定义要接收的目标ID与掩码配置
+6. 调用HAL_FDCAN_ConfigFilter配置过滤器
+7. HAL_FDCAN_ConfigGlobalFilter（这是什么？）
+8. HAL_FDCAN_Start启动CAN
+### 接收
+STM32 的 FDCAN1 接收到 CAN 报文后，首先通过硬件过滤器筛选，将符合条件的报文存入接收 FIFO0。主循环不断调用 FOC_CAN_ProcessRx()，检查 FIFO 中是否有数据，有则调用 HAL_FDCAN_GetRxMessage() 读取报文。随后检查报文 ID、帧类型和数据长度，根据命令类型解析数据，最后调用对应的 FOC 函数，实现电机启停、速度设置和位置设置。
+### 发送
+主循环不断调用 FOC_CAN_SendFeedback()，每隔25 ms从 foc_motor 结构体中选择一类反馈数据，包括电机状态、位置、电流或速度，将其按通信协议打包成8字节数据。随后调用 FOC_CAN_Send()，配置 CAN ID、帧类型和数据长度，检查发送 FIFO 是否有空位，最后通过 HAL_FDCAN_AddMessageToTxFifoQ() 将报文提交给 FDCAN 硬件，由硬件完成总线发送。
+### 通信协议
+本项目采用自定义 CAN 通信协议，使用经典 CAN 格式，通信速率为 500 kbit/s，采用 11 位标准帧 ID，每帧8字节数据。ESP32-S3 向 STM32 发送的控制报文 ID 为 0x100，其中第1字节表示命令类型（模式切换、速度设置、位置设置、启动或停止），第2、3字节表示控制参数，采用小端格式存储，其余字节保留；STM32 向 ESP32-S3 发送的反馈报文根据 CAN ID 区分数据类型，0x180 表示电机状态和控制模式，0x181 表示目标及实际位置，0x182 表示目标及实际 Id、Iq 电流，0x183 表示目标及实际速度。位置数据以 0.01° 为单位，电流数据以 0.01 A 为单位，速度数据以 1 RPM 为单位，双方按照约定的数据格式进行编码和解码，实现电机控制指令下发及运行状态反馈。
+### CAN通信特点
+1. CAN 是一种基于总线的有线通信方式，抗干扰能力较强。 CAN 通常通过 CAN_H 和 CAN_L 两根信号线进行差分信号传输，利用两根线之间的电压差表示数据，能够有效抑制外部共模干扰，适合电机驱动等存在电磁干扰的工业环境。在本工程中，STM32G431 和 ESP32-S3 使用各自的 CAN 控制器，并需要通过 CAN 收发器接入总线，实现控制指令与运行数据的交换。
+2. CAN 采用多主机通信和基于报文 ID 的优先级仲裁机制。 总线上的多个节点都可以主动发送数据，当多个节点同时发送时，CAN 会根据报文 ID 进行无损仲裁，ID 数值越小，优先级越高。本工程中，ESP32-S3 发送控制指令使用 0x100，STM32 发送反馈数据使用 0x180～0x183，因此控制指令具有比反馈报文更高的总线仲裁优先级。CAN 总线规定：当多个节点同时发送报文时，CAN ID 数值越小，仲裁优先级越高。
+3. CAN 是面向报文的通信方式，通过 ID 区分数据类型。 与传统点对点串口通信不同，CAN 报文主要通过 ID 标识消息类型，接收节点可以利用硬件过滤器筛选需要的数据。本工程使用 500 kbit/s 的经典 CAN、11 位标准帧和8字节数据格式。STM32 通过过滤器接收 ID 为 0x100 的控制报文，根据数据区中的命令编号执行电机启停、速度和位置控制；发送时使用不同 ID 区分电机状态、位置、电流和速度反馈。
+4. CAN 具有较完善的可靠性机制。 CAN 协议本身具有 CRC 校验、错误检测、应答确认和自动重发等机制，能够提高通信可靠性。本工程 STM32 端通过硬件接收 FIFO 缓存报文，由主循环读取和解析；发送时将反馈数据提交到硬件发送 FIFO，由 FDCAN 控制器完成后续发送。需要注意，CAN 底层的应答机制不等于应用层已经确认电机执行了指令，当前工程尚未实现完整的应用层指令应答和故障恢复机制。
+5. CAN 通信与实时电机控制相互独立。 本工程采用主循环处理 CAN 指令接收与反馈发送，而电流环、速度环和位置环分别由 ADC 和 TIM6 中断周期性执行。CAN 收到指令后，只需修改相应控制环的目标值，不直接执行电机控制算法。同时，STM32 每25 ms轮流提交一类反馈报文，每类反馈约100 ms更新一次，减少通信任务对实时控制的影响。
+
+# ESP32端
+## LCD
+1. BSP_LCD 的整体设计思路
+本工程使用 ESP32-S3 驱动一块 320×240 分辨率、ST7789 控制芯片的 LCD 屏幕，采用 8 位 I80 并行总线通信。I80 是一种并行通信接口，ESP32 通过8根数据线传输数据，并通过控制信号区分命令和显示数据。为了提高代码的模块化程度，我们将 LCD 驱动封装在 bsp_lcd.c 中，将其划分为 GPIO 配置、I80 总线初始化、LCD 接口配置、ST7789 初始化和 LVGL 初始化五个部分，最后统一由 bsp_lcd_init() 完成调用。
+2. 初始化 GPIO 和 I80 总线
+首先根据开发板的硬件连接关系，定义 LCD 的各个 GPIO 引脚。其中8根数据线 D0～D7 分别使用 GPIO40、39、38、12、11、10、9、46，片选 CS 使用 GPIO1，命令/数据选择 DC 使用 GPIO2，写信号 WR 使用 GPIO42，读信号 RD 使用 GPIO41。由于本工程只向 LCD 写入数据，不读取 LCD 数据，因此通过 BSP_LCD_InitRD() 将 RD 配置为高电平。接着在 BSP_LCD_InitBus() 中创建 esp_lcd_i80_bus_config_t 配置结构体，设置数据引脚、DC 和 WR 引脚、8位总线宽度，并配置 DMA 最大传输大小为 320×40×2=25600 字节，最后调用 esp_lcd_new_i80_bus() 创建 I80 总线。**DMA（直接存储器访问）**可以让硬件传输显示数据，减少 CPU 逐字节搬运数据的负担。
+3. 配置 LCD 通信接口
+总线初始化完成后，通过 BSP_LCD_InitPanelIO() 创建 LCD 通信接口。这里使用 esp_lcd_panel_io_i80_config_t 配置结构体，指定 CS 引脚为 GPIO1、写入时钟为20 MHz、传输队列深度为2，并设置 DC 信号在发送命令时为低电平、发送显示数据时为高电平。由于屏幕使用 RGB565 格式，还开启了字节交换功能 swap_color_bytes=true。RGB565 是一种16位颜色格式，分别用5位表示红色、6位表示绿色、5位表示蓝色。完成配置后，调用 esp_lcd_new_panel_io_i80() 创建 LCD 接口对象，后续 ST7789 驱动就通过该接口发送命令和像素数据。
+4. 初始化 ST7789 显示控制器
+接下来通过 BSP_LCD_InitPanel() 初始化 ST7789。首先创建 esp_lcd_panel_dev_config_t，设置 RGB 颜色顺序、16位像素格式，并将硬件复位引脚设置为 GPIO_NUM_NC，表示不使用独立的复位 GPIO。然后调用 esp_lcd_new_panel_st7789() 创建屏幕对象，再依次调用 esp_lcd_panel_reset()、esp_lcd_panel_init() 完成复位和初始化。最后设置颜色反转 esp_lcd_panel_invert_color(true)、显示偏移量为0、交换 XY 轴并设置镜像方向，使屏幕适配320×240横屏显示，最后通过 esp_lcd_panel_disp_on_off(true) 开启显示输出。
+5. 初始化 LVGL 图形界面
+LCD 驱动完成后，通过 BSP_LCD_InitLVGL() 将屏幕接入 LVGL 图形界面库。LVGL 负责创建按钮、滑块、文字标签等界面组件，而底层 LCD 驱动负责真正将像素数据写入屏幕。首先使用 ESP_LVGL_PORT_INIT_CONFIG() 创建 LVGL 配置，设置后台任务优先级为8、最大睡眠时间为5 ms、定时器周期为2 ms，再调用 lvgl_port_init() 启动 LVGL。随后创建 lvgl_port_display_cfg_t，关联前面创建的 LCD 接口和屏幕对象，设置分辨率320×240、RGB565颜色格式、40行的绘图缓冲区、DMA传输、单缓冲以及局部刷新模式，并配置与屏幕方向一致的旋转参数。最后调用 lvgl_port_add_disp() 注册显示设备，返回 lv_display_t * 显示器句柄，供上层 UI 使用。
+6. 统一初始化接口并由 main 调用
+最后，我们设计 bsp_lcd_init() 作为 LCD 模块唯一的对外初始化接口，内部依次调用 BSP_LCD_InitRD()、BSP_LCD_InitBus()、BSP_LCD_InitPanelIO()、BSP_LCD_InitPanel() 和 BSP_LCD_InitLVGL()，并返回显示器句柄。该函数还会检查屏幕是否已经初始化，避免重复创建资源。在 app_main() 中，先初始化 XL9555 和触摸芯片，再调用 bsp_lcd_init()，随后通过 lvgl_port_lock(0) 获取 LVGL 锁，创建速度和位置控制页面、注册触摸输入设备，完成后调用 lvgl_port_unlock()。最后通过 BSP_XL9555_SetBacklight(true) 打开屏幕背光。背光并不是由 bsp_lcd.c 直接控制，而是通过 I2C 接口控制 XL9555 的 P0.7 引脚实现的。
+## 触摸输入
+1. BSP_TOUCH 的整体设计思路
+本工程使用 ESP32-S3 驱动 CHSC5432 电容触摸芯片，通过 I2C 总线读取触摸坐标，并将触摸信息传递给 LVGL，实现屏幕按钮点击、滑块拖动等交互功能。与 LCD 使用的 I80 并行总线不同，触摸芯片采用 I2C 通信。为了实现模块化设计，我们将触摸功能封装在 bsp_touch.c 中，主要划分为触摸芯片初始化、触摸坐标读取、LVGL 触摸回调以及输入设备注册四个部分。最终，上层 UI 只需要创建 LVGL 控件，不需要直接处理触摸芯片的通信和坐标解析。
+2. 初始化 I2C 总线与触摸芯片
+首先，触摸芯片与 XL9555 IO 扩展芯片共用 ESP32-S3 的 I2C0 总线，其中 SDA 使用 GPIO48、SCL 使用 GPIO45，通信速率为400 kHz。由于 I2C 总线已经在 BSP_XL9555_Init() 中初始化，因此触摸模块不需要重复创建总线，而是通过 BSP_XL9555_GetI2CBus() 获取已有的 I2C 总线句柄。随后，在 BSP_touch_init() 中创建 i2c_device_config_t 配置结构体，指定 CHSC5432 的 7位 I2C 设备地址为 0x2E，配置400 kHz通信速率，最后调用 i2c_master_bus_add_device() 将触摸芯片注册到 I2C 总线上，并保存返回的设备句柄 touch_dev，供后续读取触摸数据使用。
+3. 通过 XL9555 完成触摸芯片复位
+在注册触摸设备之前，需要先对 CHSC5432 进行硬件复位。本工程的触摸复位引脚并没有直接连接 ESP32-S3 的普通 GPIO，而是连接到 XL9555 的 P0.6 引脚，因此通过 BSP_XL9555_SetTouchReset() 间接控制复位信号。在 BSP_touch_init() 中，首先调用 BSP_XL9555_SetTouchReset(true) 将复位引脚拉低，保持20 ms；随后调用 BSP_XL9555_SetTouchReset(false) 将引脚拉高，释放复位，并等待80 ms，使触摸芯片完成启动。这里使用 vTaskDelay(pdMS_TO_TICKS(...)) 实现延时，避免使用忙等待方式一直占用 CPU。触摸芯片启动完成后，再将其注册为 I2C 设备。
+4. 通过 I2C 读取并解析触摸坐标
+触摸芯片初始化完成后，通过 BSP_touch_ReadPoint() 获取触摸位置。该函数首先准备4字节寄存器地址 {0x20, 0x00, 0x00, 0x2C}，对应 CHSC5432 的触摸事件寄存器地址 0x2000002C，然后调用 i2c_master_transmit_receive()，先向触摸芯片发送寄存器地址，再连续读取 28字节触摸事件数据。读取完成后，通过 data[1] & 0x0F 判断当前是否有有效触摸点；如果没有触摸，则返回 false。如果存在有效触摸点，则根据协议将不同字节中的数据组合成 X、Y 坐标，其中 X 坐标由 data[5] 高4位和 data[3] 组成，Y 坐标由 data[5] 低4位和 data[2] 组成。最后检查坐标是否位于320×240屏幕范围内，并通过 y = 239 - raw_y 翻转 Y 轴，使触摸坐标方向与 LCD 显示方向一致。当前实现只解析一个触摸点，并不处理多点手势。
+5. 通过回调函数将触摸数据传递给 LVGL
+读取到触摸坐标后，需要让 LVGL 知道用户是否按下了屏幕，以及按下的位置。因此，我们设计 BSP_touch_ReadCallback() 作为 LVGL 的触摸读取回调函数。回调函数就是提前注册给 LVGL、由 LVGL 在需要读取输入时自动调用的函数。 当 BSP_touch_ReadPoint() 成功读取触摸坐标时，将坐标保存到 touch_last_point，并将 data->state 设置为 LV_INDEV_STATE_PRESSED，表示屏幕正被按下；如果没有检测到有效触摸，则保留上一次的有效坐标，并设置为 LV_INDEV_STATE_RELEASED，表示触摸已经释放。这样 LVGL 就能根据按下位置和释放状态，自动判断用户是否点击按钮、拖动滑块或触发其他控件事件，而不需要我们手动判断每个按钮的触摸范围。
+6. 注册 LVGL 输入设备并在 main 中调用
+最后，通过 BSP_touch_register_lvgl() 将触摸模块注册到 LVGL。首先调用 lv_indev_create() 创建输入设备对象，使用 lv_indev_set_type() 将设备类型设置为 LV_INDEV_TYPE_POINTER，表示这是一个触摸指针设备；随后调用 lv_indev_set_read_cb() 注册前面编写的触摸回调函数，并通过 lv_indev_set_display() 将触摸设备关联到已经初始化的 LCD 显示器。最后获取 LVGL 输入设备的读取定时器，并设置为 每10 ms读取一次触摸状态。在 app_main() 中，先初始化 XL9555 和 CHSC5432，再初始化 LCD 和 LVGL，创建速度与位置控制页面后，调用 BSP_touch_register_lvgl(display) 注册触摸设备。注册成功后，LVGL 后台任务就会周期性读取触摸状态，并自动触发对应的 UI 事件。
+## 

@@ -1,3 +1,5 @@
+/* 历史实现：已由 foc_comm_usart.c/.h 替代，保留供对照，已退出 CMake 编译。
+ * 不要与新模块同时编译/引用，否则会重复定义 HAL 回调或控制模式类型。 */
 /**
  * @file    foc_vofa.c
  * @brief   VOFA+遥测发送与命令处理
@@ -24,6 +26,7 @@ static volatile uint8_t telemetry_pending;
 static volatile uint8_t tx_busy;
 static uint8_t tx_buffer[VOFA_TX_FRAME_SIZE];
 static volatile uint8_t rx_dma_buffer[VOFA_RX_DMA_SIZE]; // DMA与主循环共享，volatile确保每次读取内存
+//字节缓冲区，在内存中提前划分的区域。rx_dma_buffer就是一个能存放512字节（一个字节8bit）数据的数组。
 static volatile uint32_t rx_dma_wrap_count; // 接收满512字节时加1，用于区分空缓冲与整圈新数据
 static uint32_t rx_read_count; // 主循环已处理的累计字节数
 static volatile uint8_t rx_restart_pending; // 错误中断只置标志，主循环恢复接收
@@ -47,8 +50,8 @@ static uint32_t FOC_VOFA_GetRxCount(void)
 {
     uint32_t primask = __get_PRIMASK();
     __disable_irq(); // 保证“满缓冲计数”和DMA寄存器属于同一个快照，结束后恢复原来的中断状态
-    uint32_t wraps = rx_dma_wrap_count;
-    uint32_t remaining = __HAL_DMA_GET_COUNTER(vofa_uart->hdmarx);
+    uint32_t wraps = rx_dma_wrap_count;//写满了多少次缓冲区
+    uint32_t remaining = __HAL_DMA_GET_COUNTER(vofa_uart->hdmarx);//直接读取当前DMA计数器的值，表示当前DMA还剩余多少字节未接收
     if (__HAL_DMA_GET_FLAG(vofa_uart->hdmarx, __HAL_DMA_GET_TC_FLAG_INDEX(vofa_uart->hdmarx)) != 0U)
     {
         wraps++; // DMA已经回绕，但满缓冲中断尚未执行；暂时补算，不修改中断计数

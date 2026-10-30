@@ -4,7 +4,7 @@
  */
 #include "foc_key.h"
 #include "foc_manager.h"
-#include "foc_vofa.h"
+#include "foc_comm_usart.h"
 #include "motor_param.h"
 #include "stm32g4xx_hal.h"
 
@@ -93,7 +93,7 @@ static void FOC_KEY_ProcessSpeedButtons(void)
   uint8_t speed_down = FOC_KEY_SpeedButtonPressed(
       FOC_SPEED_DOWN_PORT, FOC_SPEED_DOWN_PIN, &speed_down_button, now);
   if (foc_motor.motor_state != FOC_STATE_RUNNING ||
-      FOC_VOFA_GetControlMode() != FOC_CONTROL_SPEED || speed_up == speed_down)
+      FOC_COMM_USART_GetControlMode() != FOC_CONTROL_SPEED || speed_up == speed_down)
   {
     return;
   }

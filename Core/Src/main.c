@@ -179,7 +179,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   static uint8_t pos_cnt = 0;
   if(htim == &htim6 && foc_motor.motor_state == FOC_STATE_RUNNING)
   {
-    if(FOC_VOFA_GetControlMode() == FOC_CONTROL_POSITION)
+    if(FOC_COMM_USART_GetControlMode() == FOC_CONTROL_POSITION)
     {
       if(++pos_cnt >= 5U)
       {
@@ -208,7 +208,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
     if(++telemetry_divider >= 4U)
     {
       telemetry_divider = 0U;
-      FOC_VOFA_RequestTelemetry();
+      FOC_COMM_USART_RequestTelemetry();
     }
   }
 }

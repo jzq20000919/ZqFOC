@@ -4,7 +4,7 @@
  */
 #include "foc_manager.h"
 #include "foc_key.h"
-#include "foc_vofa.h"
+#include "foc_comm_usart.h"
 #include "main.h"
 #include "motor_param.h"
 #include "adc.h"
@@ -101,54 +101,6 @@ void FOC_Motor_Start(void)
   foc_motor.motor_state = FOC_STATE_ALIGNING;
 }
 
-/**
- * @brief  等待对齐释放，复位控制器并启动闭环
- */
-static void FOC_Motor_HandleAlignRelease(void)
-{
-  uint32_t now = HAL_GetTick();
-
-  if (foc_motor.bus_voltage.voltage <= 0.0f ||
-      (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
-  {
-    FOC_Motor_Stop();
-    return;
-  }
-  if ((uint32_t)(now - alignment_release_start_tick) < ENCODER_ALIGN_RELEASE_TIME_MS)
-  {
-    return;
-  }
-
-  // 转子释放后重新同步角度与测速历史，避免首次速度反馈跳变。
-  FOC_ENCODER_UpdateAngle(&foc_motor.encoder);
-  foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
-  foc_motor.encoder.speed = 0.0f;
-  foc_motor.encoder.speed_raw = 0.0f; // 对齐释放后同步清零原始测速与滤波反馈
-  foc_motor.loop_spd.speed_fbk = 0.0f;
-  FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, 0.0f);
-  FOC_LOOP_CUR_SetReference(&foc_motor.loop_cur, 0.0f, 0.0f);
-  FOC_PI_Reset(&foc_motor.loop_cur.pi_id);
-  FOC_PI_Reset(&foc_motor.loop_cur.pi_iq);
-  FOC_PI_Reset(&foc_motor.loop_spd.pi_spd);
-  FOC_PI_Reset(&foc_motor.loop_pos.pi_pos);
-  FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.encoder.angle_m);
-  FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
-
-  // 控制器归零后启动ADC电流环与TIM6；成功后才设置启动速度目标。
-  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
-      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
-      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK ||
-      HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
-  {
-    FOC_Motor_Stop();
-    return;
-  }
-  if (FOC_VOFA_GetControlMode() == FOC_CONTROL_SPEED)
-  {
-    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, MOTOR_START_SPEED_RPM);
-  }
-  foc_motor.motor_state = FOC_STATE_RUNNING;
-}
 
 /**
  * @brief  保持固定磁场，采集编码器角度并计算电角度偏置
@@ -198,6 +150,56 @@ static void FOC_Motor_HandleAligning(void)
   FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
   alignment_release_start_tick = now;
   foc_motor.motor_state = FOC_STATE_ALIGN_RELEASE;
+}
+
+
+/**
+ * @brief  等待对齐释放，复位控制器并启动闭环
+ */
+static void FOC_Motor_HandleAlignRelease(void)
+{
+  uint32_t now = HAL_GetTick();
+
+  if (foc_motor.bus_voltage.voltage <= 0.0f ||
+      (htim1.Instance->BDTR & TIM_BDTR_MOE) == 0U)
+  {
+    FOC_Motor_Stop();
+    return;
+  }
+  if ((uint32_t)(now - alignment_release_start_tick) < ENCODER_ALIGN_RELEASE_TIME_MS)
+  {
+    return;
+  }
+
+  // 转子释放后重新同步角度与测速历史，避免首次速度反馈跳变。
+  FOC_ENCODER_UpdateAngle(&foc_motor.encoder);
+  foc_motor.encoder.spd_last_count = foc_motor.encoder.count;
+  foc_motor.encoder.speed = 0.0f;
+  foc_motor.encoder.speed_raw = 0.0f; // 对齐释放后同步清零原始测速与滤波反馈
+  foc_motor.loop_spd.speed_fbk = 0.0f;
+  FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, 0.0f);
+  FOC_LOOP_CUR_SetReference(&foc_motor.loop_cur, 0.0f, 0.0f);
+  FOC_PI_Reset(&foc_motor.loop_cur.pi_id);
+  FOC_PI_Reset(&foc_motor.loop_cur.pi_iq);
+  FOC_PI_Reset(&foc_motor.loop_spd.pi_spd);
+  FOC_PI_Reset(&foc_motor.loop_pos.pi_pos);
+  FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.encoder.angle_m);
+  FOC_SVPWM_Update(&foc_motor.svpwm, 0.0f, 0.0f, foc_motor.bus_voltage.voltage);
+
+  // 控制器归零后启动ADC电流环与TIM6；成功后才设置启动速度目标。
+  if (HAL_ADCEx_InjectedStart(&hadc2) != HAL_OK ||
+      HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK ||
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK ||
+      HAL_TIM_Base_Start_IT(&htim6) != HAL_OK)
+  {
+    FOC_Motor_Stop();
+    return;
+  }
+  if (FOC_COMM_USART_GetControlMode() == FOC_CONTROL_SPEED)
+  {
+    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, MOTOR_START_SPEED_RPM);
+  }
+  foc_motor.motor_state = FOC_STATE_RUNNING;
 }
 
 /**
@@ -302,8 +304,8 @@ void FOC_Motor_Init(void)
   __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
   current_offset_valid = (offset_status == HAL_OK) ? 1U : 0U;
 
-  // 上电启动VOFA通信；功率输出仍由PD2按键启动。
-  if(FOC_VOFA_Init(&huart2, &foc_motor.encoder, &foc_motor.loop_cur, &foc_motor.loop_spd, &foc_motor.loop_pos) != HAL_OK)
+  // 上电启动 USART 通信；本次初始化不启动电机，启停仍由现有控制入口请求。
+  if(FOC_COMM_USART_Init(&huart2, &foc_motor.encoder, &foc_motor.loop_cur, &foc_motor.loop_spd, &foc_motor.loop_pos) != HAL_OK)
   {
     Error_Handler();
   }
@@ -332,6 +334,6 @@ void FOC_Motor_Task(void)
   FOC_Motor_UpdateBusVoltage();
   FOC_KEY_Task();
   FOC_Motor_ProcessAlignment();
-  FOC_VOFA_ProcessTx();
-  FOC_VOFA_ProcessRx();
+  FOC_COMM_USART_ProcessRx(); // 先处理控制命令，再发送最新状态数据。
+  FOC_COMM_USART_ProcessTx();
 }

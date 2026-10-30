@@ -1,3 +1,5 @@
+/* 历史实现：已由 foc_comm_usart.c/.h 替代，保留供对照，已退出 CMake 编译。
+ * 不要与新模块同时编译/引用，否则会重复定义 HAL 回调或控制模式类型。 */
 /**
  * @file    foc_vofa.h
  * @brief   VOFA+遥测与命令接口
