@@ -24,6 +24,17 @@ void FOC_SVPWM_Start(FOC_SVPWM_HandleTypeDef *svpwm)
     HAL_TIMEx_PWMN_Start(svpwm->htim, TIM_CHANNEL_3);
 }
 
+void FOC_SVPWM_Stop(FOC_SVPWM_HandleTypeDef *svpwm)
+{
+    __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(svpwm->htim);
+    HAL_TIM_PWM_Stop(svpwm->htim, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Stop(svpwm->htim, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Stop(svpwm->htim, TIM_CHANNEL_3);
+    HAL_TIMEx_PWMN_Stop(svpwm->htim, TIM_CHANNEL_1);
+    HAL_TIMEx_PWMN_Stop(svpwm->htim, TIM_CHANNEL_2);
+    HAL_TIMEx_PWMN_Stop(svpwm->htim, TIM_CHANNEL_3);
+}
+
 void FOC_SVPWM_Update(FOC_SVPWM_HandleTypeDef *svpwm,   float v_alpha, float v_beta, float v_bus)
 {
     float v_u, v_v, v_w;

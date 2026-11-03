@@ -17,6 +17,10 @@ void FOC_CURRENT_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc
     current->i_a = 0.0f;
     current->i_b = 0.0f;
     current->i_c = 0.0f;
+    current->offset_sum_a = 0U;
+    current->offset_sum_b = 0U;
+    current->offset_count = 0U;
+    current->offset_tick = HAL_GetTick();
 }
 
 void FOC_CURRENT_Update(FOC_CURRENT_HandleTypeDef *current)
@@ -31,49 +35,46 @@ void FOC_CURRENT_Update(FOC_CURRENT_HandleTypeDef *current)
     current->i_c = -(current->i_a + current->i_b);
 }
 
-HAL_StatusTypeDef FOC_CURRENT_CalibrateOffset(
-    FOC_CURRENT_HandleTypeDef *current,
-    TIM_HandleTypeDef *pwm_timer)
+void FOC_CURRENT_StartSampling(FOC_CURRENT_HandleTypeDef *current,
+                               TIM_HandleTypeDef *timer, uint8_t interrupt)
 {
-    const uint32_t phase_mask = TIM_CCER_CC1E | TIM_CCER_CC1NE |
-                                TIM_CCER_CC2E | TIM_CCER_CC2NE |
-                                TIM_CCER_CC3E | TIM_CCER_CC3NE;
-    uint32_t sum_a = 0U;
-    uint32_t sum_b = 0U;
+    HAL_ADCEx_InjectedStart(current->hadc2);
+    if (interrupt) HAL_ADCEx_InjectedStart_IT(current->hadc1);
+    else HAL_ADCEx_InjectedStart(current->hadc1);
+    HAL_TIM_PWM_Start(timer, TIM_CHANNEL_4);
+}
 
-    if (current == NULL || pwm_timer == NULL ||
-        current->hadc1 == NULL || current->hadc2 == NULL ||
-        (pwm_timer->Instance->CCER & phase_mask) != 0U)
-    {
-        return HAL_ERROR;
-    }
+void FOC_CURRENT_StopSampling(FOC_CURRENT_HandleTypeDef *current, TIM_HandleTypeDef *timer)
+{
+    HAL_TIM_PWM_Stop(timer, TIM_CHANNEL_4);
+    HAL_ADCEx_InjectedStop_IT(current->hadc1);
+    HAL_ADCEx_InjectedStop(current->hadc2);
+}
 
-    // 清除启动阶段的旧完成标志，后续每次只读取新触发的注入结果。
+uint8_t FOC_CURRENT_CalibrateOffset(
+    FOC_CURRENT_HandleTypeDef *current, TIM_HandleTypeDef *pwm_timer)
+{
+    // 已完成时只返回结果，不重复采样或关闭后续对齐/运行使用的外设。
+    if (current->offset_count == CURRENT_OFFSET_SAMPLE_COUNT) return 1U;
+
+    uint32_t elapsed = HAL_GetTick() - current->offset_tick;
+    if (elapsed < CURRENT_OFFSET_SAMPLE_INTERVAL_MS) return 0U;
+    if (!__HAL_ADC_GET_FLAG(current->hadc1, ADC_FLAG_JEOS) ||
+        !__HAL_ADC_GET_FLAG(current->hadc2, ADC_FLAG_JEOS))
+        return 0U;
+
+    current->raw_a = (uint16_t)HAL_ADCEx_InjectedGetValue(current->hadc1, ADC_INJECTED_RANK_1);
+    current->raw_b = (uint16_t)HAL_ADCEx_InjectedGetValue(current->hadc2, ADC_INJECTED_RANK_1);
+    current->offset_sum_a += current->raw_a;
+    current->offset_sum_b += current->raw_b;
+    current->offset_count++;
+    current->offset_tick = HAL_GetTick();
     __HAL_ADC_CLEAR_FLAG(current->hadc1, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
     __HAL_ADC_CLEAR_FLAG(current->hadc2, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
-    for (uint32_t i = 0U; i < CURRENT_OFFSET_SAMPLE_COUNT; ++i)
-    {
-        uint32_t start_tick = HAL_GetTick();
-        while (!__HAL_ADC_GET_FLAG(current->hadc1, ADC_FLAG_JEOS) ||
-               !__HAL_ADC_GET_FLAG(current->hadc2, ADC_FLAG_JEOS))
-        {
-            if ((uint32_t)(HAL_GetTick() - start_tick) >= CURRENT_OFFSET_SAMPLE_TIMEOUT_MS)
-            {
-                return HAL_TIMEOUT;
-            }
-        }
-        current->raw_a = (uint16_t)HAL_ADCEx_InjectedGetValue(
-            current->hadc1, ADC_INJECTED_RANK_1);
-        current->raw_b = (uint16_t)HAL_ADCEx_InjectedGetValue(
-            current->hadc2, ADC_INJECTED_RANK_1);
-        sum_a += current->raw_a;
-        sum_b += current->raw_b;
-        __HAL_ADC_CLEAR_FLAG(current->hadc1, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
-        __HAL_ADC_CLEAR_FLAG(current->hadc2, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
-        HAL_Delay(CURRENT_OFFSET_SAMPLE_INTERVAL_MS);
-    }
 
-    current->offset_a = (float)sum_a / (float)CURRENT_OFFSET_SAMPLE_COUNT;
-    current->offset_b = (float)sum_b / (float)CURRENT_OFFSET_SAMPLE_COUNT;
-    return HAL_OK;
+    if (current->offset_count < CURRENT_OFFSET_SAMPLE_COUNT) return 0U;
+    current->offset_a = (float)current->offset_sum_a / CURRENT_OFFSET_SAMPLE_COUNT;
+    current->offset_b = (float)current->offset_sum_b / CURRENT_OFFSET_SAMPLE_COUNT;
+    FOC_CURRENT_StopSampling(current, pwm_timer);
+    return 1U;
 }

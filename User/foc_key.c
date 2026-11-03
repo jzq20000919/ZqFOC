@@ -92,13 +92,13 @@ static void FOC_KEY_ProcessSpeedButtons(void)
       FOC_SPEED_UP_PORT, FOC_SPEED_UP_PIN, &speed_up_button, now);
   uint8_t speed_down = FOC_KEY_SpeedButtonPressed(
       FOC_SPEED_DOWN_PORT, FOC_SPEED_DOWN_PIN, &speed_down_button, now);
-  if (foc_motor.motor_state != FOC_STATE_RUNNING ||
+  if (foc_motor.motor_state != FOC_STATE_RUNNING_SPEED ||
       FOC_COMM_USART_GetControlMode() != FOC_CONTROL_SPEED || speed_up == speed_down)
   {
     return;
   }
 
-  float speed_ref = foc_motor.loop_spd.speed_ref;
+  float speed_ref = foc_motor.speed_target;
   if (speed_up != 0U)
   {
     speed_ref += MOTOR_SPEED_BUTTON_STEP_RPM;
@@ -109,6 +109,7 @@ static void FOC_KEY_ProcessSpeedButtons(void)
   }
   // 允许跨越零速切换方向，由速度环接口统一限制正负最大转速。
   FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, speed_ref);
+  foc_motor.speed_target = foc_motor.loop_spd.speed_ref;
 }
 
 /**

@@ -26,6 +26,8 @@ void FOC_SVPWM_Init(FOC_SVPWM_HandleTypeDef *svpwm, TIM_HandleTypeDef *htim);
  * @param  svpwm SVPWM句柄
  */
 void FOC_SVPWM_Start(FOC_SVPWM_HandleTypeDef *svpwm);
+/** @brief 立即关闭三相功率输出。 */
+void FOC_SVPWM_Stop(FOC_SVPWM_HandleTypeDef *svpwm);
 /**
  * @brief  将静止坐标系电压转换为三相PWM占空比
  * @param  svpwm SVPWM句柄

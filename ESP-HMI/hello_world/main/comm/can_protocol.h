@@ -26,8 +26,8 @@ typedef enum
 {
     CAN_STATE_STOPPED       = 0,   // 电机停止
     CAN_STATE_ALIGNING      = 1,   // 电机对齐中
-    CAN_STATE_ALIGN_RELEASE = 2,   // 对齐释放阶段
-    CAN_STATE_RUNNING       = 3    // 电机运行中
+    CAN_STATE_RUNNING_SPEED = 2,   // 速度闭环
+    CAN_STATE_RUNNING_POSITION = 3 // 位置闭环，含零点保持
 } CAN_State_t;
 /* ==================== 电机电流信息 ==================== */
 typedef struct

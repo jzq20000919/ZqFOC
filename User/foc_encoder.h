@@ -6,6 +6,7 @@
 #define FOC_ENCODER_H
 #include "stm32g4xx_hal.h"
 #include "motor_param.h"
+#include "foc_svpwm.h"
 
 typedef struct
 {
@@ -17,6 +18,14 @@ typedef struct
     float angle_e_offset;     // 电角度零点偏置，rad
     float speed;              // 机械转速，rpm
     float speed_raw;          // 未滤波的差分转速，rpm；保留它便于区分测速量化与真实低频振荡
+    float aligned_raw_angle;  // 上电对齐位置x，只供首次机械零点标定使用
+    float home_from_z;        // 固定偏移x-y，rad，保存在Flash
+    float zero_raw_angle;     // 本次上电机械0点对应的原始角度
+    uint8_t zero_saved;        // Flash有有效机械零点参数
+    uint8_t zero_known;        // 本次上电已经恢复机械零点
+    volatile uint8_t index_armed; // 寻Z时开启，只锁存一个上升沿
+    volatile uint8_t index_found;
+    volatile uint32_t index_count; // Z上升沿计数y
 } FOC_ENCODER_HandleTypeDef;
 
 /**
@@ -37,6 +46,9 @@ void FOC_ENCODER_UpdateAngle(FOC_ENCODER_HandleTypeDef *encoder);
  * @param  dt 两次测速间隔，s
  */
 void FOC_ENCODER_UpdateSpeed(FOC_ENCODER_HandleTypeDef *encoder, float dt);
+/** @brief 上电固定磁场对齐；0表示等待完成，1表示对齐结束。 */
+uint8_t FOC_ENCODER_Align(FOC_ENCODER_HandleTypeDef *encoder,
+                         FOC_SVPWM_HandleTypeDef *svpwm, float v_bus);
 
 /**
  * @brief  设置电角度零点偏置
@@ -60,12 +72,18 @@ void FOC_ENCODER_CalibrateElectricalOffset(
  * @param  align_angle 对齐磁场的电角度，rad
  * @param  angle_samples 机械角采样数组，单位rad
  * @param  sample_count 采样个数
- * @return HAL_OK 校准成功，HAL_ERROR 采样无效
  */
-HAL_StatusTypeDef FOC_ENCODER_CalibrateElectricalOffsetSamples(
+void FOC_ENCODER_CalibrateElectricalOffsetSamples(
     FOC_ENCODER_HandleTypeDef *encoder,
     float align_angle,
     const float *angle_samples,
     uint8_t sample_count);
+
+/** @brief 输出关闭后调用：根据x、y计算固定偏移，恢复坐标并保存Flash。 */
+void FOC_ENCODER_CalibrateZero(FOC_ENCODER_HandleTypeDef *encoder);
+/** @brief 根据本次Z计数恢复机械零点和电角度补偿；调用时与控制中断互斥。 */
+void FOC_ENCODER_RestoreZero(FOC_ENCODER_HandleTypeDef *encoder);
+/** @brief 判断当前是否已回到机械零点，供状态跳转使用。 */
+uint8_t FOC_ENCODER_AtZero(FOC_ENCODER_HandleTypeDef *encoder);
 
 #endif

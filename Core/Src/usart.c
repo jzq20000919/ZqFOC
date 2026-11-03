@@ -28,8 +28,12 @@ UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_tx;
 DMA_HandleTypeDef hdma_usart2_rx;
 
-/* USART2 init function */
-
+/**
+ * @brief  按IOC配置初始化USART2：2 Mbps、8位数据、无校验、2位停止位。
+ * @return 无。
+ * @note   在main中调用一次；HAL_UART_Init会调用HAL_UART_MspInit配置底层资源。
+ *         本函数只初始化硬件，DMA接收由Modbus_StartReceive另行启动。
+ */
 void MX_USART2_UART_Init(void)
 {
 
@@ -43,7 +47,7 @@ void MX_USART2_UART_Init(void)
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 2000000;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.StopBits = UART_STOPBITS_2;
   huart2.Init.Parity = UART_PARITY_NONE;
   huart2.Init.Mode = UART_MODE_TX_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
@@ -73,6 +77,13 @@ void MX_USART2_UART_Init(void)
 
 }
 
+/**
+ * @brief  配置USART2使用的时钟、GPIO、DMA和串口中断。
+ * @param[in,out] uartHandle HAL传入的UART句柄，本函数只处理USART2。
+ * @return 无。
+ * @note   由HAL_UART_Init调用，无需手动调用。
+ *         PB3/PB4分别为TX/RX；发送DMA为普通模式，接收DMA为循环模式。
+ */
 void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 {
 
@@ -152,6 +163,12 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
   }
 }
 
+/**
+ * @brief  释放USART2使用的时钟、GPIO、DMA和串口中断资源。
+ * @param[in,out] uartHandle HAL传入的UART句柄，本函数只处理USART2。
+ * @return 无。
+ * @note   由HAL_UART_DeInit调用，正常通信过程中不调用。
+ */
 void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 {
 

@@ -32,122 +32,60 @@ HAL_StatusTypeDef FOC_CAN_Init(void)
 void FOC_CAN_ProcessRx(void)
 {
     FDCAN_RxHeaderTypeDef header = {0};
-    uint8_t data[64] = {0};                 // HAL先按DLC复制数据，预留最大帧长度，避免校验前越界
+    uint8_t data[64] = {0};
 
-    static int16_t target_speed = 0;
-    static uint16_t target_position = 0;   // 位置参数不能按int16解析，359.99度大于327.67度
-    static uint8_t start_pending = 0;
-    static FOC_CONTROL_MODE pending_mode = FOC_CONTROL_SPEED;   // 待对齐结束后应用的目标所属模式
-
-    // 读取硬件FIFO中的全部消息
     while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) > 0U)
     {
-        if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0,
-                                   &header, data) != HAL_OK)
-            break;
-
-        // 检查CAN报文
-        if (header.Identifier != 0x100U ||
-            header.IdType != FDCAN_STANDARD_ID ||
-            header.RxFrameType != FDCAN_DATA_FRAME ||
-            header.FDFormat != FDCAN_CLASSIC_CAN ||
-            header.DataLength != FDCAN_DLC_BYTES_8)
-            continue;
+        if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &header, data) != HAL_OK) break;
+        if (header.Identifier != 0x100U || header.IdType != FDCAN_STANDARD_ID ||
+            header.RxFrameType != FDCAN_DATA_FRAME || header.FDFormat != FDCAN_CLASSIC_CAN ||
+            header.DataLength != FDCAN_DLC_BYTES_8) continue;
 
         foc_can_rx_count++;
-        for (uint32_t i = 0U; i < 8U; i++)
-            foc_can_rx_data[i] = data[i];   // 只保存通过帧格式校验的最近一次报文
+        for (uint32_t i = 0U; i < 8U; ++i) foc_can_rx_data[i] = data[i];
+        // 持续接收；ALIGNING中只执行STOP，不缓存旧目标等待以后执行。
+        if (foc_motor.motor_state == FOC_STATE_ALIGNING && data[0] != 0x05U) continue;
+        uint16_t raw = (uint16_t)data[1] | ((uint16_t)data[2] << 8);
 
-        // Byte1和Byte2组成16位参数
-        uint16_t raw = (uint16_t)data[1] |
-                       ((uint16_t)data[2] << 8);
-
-        // 根据命令直接调用已有的FOC函数
         switch (data[0])
         {
-            case 0x01:  // SET_MODE
+            case 0x01:
                 if (raw <= (uint16_t)FOC_CONTROL_POSITION)
-                {
-                    if ((FOC_CONTROL_MODE)raw != FOC_COMM_USART_GetControlMode()) start_pending = 0;   // 切换模式后不再执行旧模式目标
                     FOC_COMM_USART_SetControlMode((FOC_CONTROL_MODE)raw);
+                break;
+            case 0x02:
+                if (FOC_COMM_USART_GetControlMode() == FOC_CONTROL_SPEED)
+                {
+                    float rpm = (float)(int16_t)raw;
+                    if (rpm > MOTOR_MAX_SPEED_RPM) rpm = MOTOR_MAX_SPEED_RPM;
+                    if (rpm < -MOTOR_MAX_SPEED_RPM) rpm = -MOTOR_MAX_SPEED_RPM;
+                    foc_motor.speed_target = rpm;
+                    if (foc_motor.motor_state == FOC_STATE_RUNNING_SPEED)
+                        FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, rpm);
                 }
                 break;
-
-            case 0x02:  // SET_SPEED
-                if (FOC_COMM_USART_GetControlMode() != FOC_CONTROL_SPEED) break;   // 位置模式的速度目标由位置环计算
-                target_speed = (int16_t)raw;
-
-                if (foc_motor.motor_state == FOC_STATE_RUNNING)
+            case 0x03:
+                if (FOC_COMM_USART_GetControlMode() == FOC_CONTROL_POSITION &&
+                    raw < CAN_POSITION_FULL_CIRCLE)
                 {
-                    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
-                }
-                else if (foc_motor.motor_state != FOC_STATE_STOPPED)
-                {
-                    start_pending = 1;   // 对齐中收到新目标，在RUNNING后应用
-                    pending_mode = FOC_CONTROL_SPEED;
+                    foc_motor.position_target = (float)raw * FOC_PI / 18000.0f;
+                    if (foc_motor.motor_state == FOC_STATE_RUNNING_POSITION)
+                        FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, foc_motor.position_target);
                 }
                 break;
-
-            case 0x03:  // SET_POSITION
-                if (FOC_COMM_USART_GetControlMode() != FOC_CONTROL_POSITION || raw >= CAN_POSITION_FULL_CIRCLE) break;
-                target_position = raw;   // Byte1/2是无符号小端角度×100，不是rad
-                if (foc_motor.motor_state == FOC_STATE_RUNNING)
-                {
-                    FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, (float)target_position * FOC_PI / 18000.0f);   // 0.01度换算为rad
-                }
-                else if (foc_motor.motor_state != FOC_STATE_STOPPED)
-                {
-                    start_pending = 1;
-                    pending_mode = FOC_CONTROL_POSITION;
-                }
+            case 0x04:
+                FOC_Motor_Start();
                 break;
-
-            case 0x04:  // START
-                if (foc_motor.motor_state == FOC_STATE_STOPPED)
-                {
-                    FOC_Motor_Start();
-
-                    if (foc_motor.motor_state != FOC_STATE_STOPPED)
-                    {
-                        start_pending = 1;
-                        pending_mode = FOC_COMM_USART_GetControlMode();
-                    }
-                }
-                break;
-
-            case 0x05:  // STOP
-                start_pending = 0;
-                target_speed = 0;
-                target_position = 0;
+            case 0x05:
                 FOC_Motor_Stop();
                 break;
-
             default:
                 break;
         }
     }
-
-    // 对齐会重新同步速度/位置目标，只有进入RUNNING后才应用ESP32缓存的目标。
-    if (start_pending)
-    {
-        if (foc_motor.motor_state == FOC_STATE_RUNNING)
-        {
-            if (pending_mode == FOC_COMM_USART_GetControlMode())   // 串口切换到另一模式时，不执行旧的CAN启动目标
-            {
-                if (pending_mode == FOC_CONTROL_SPEED)
-                    FOC_LOOP_SPD_SetSpeedRef(&foc_motor.loop_spd, (float)target_speed);
-                else
-                    FOC_LOOP_POS_SetPositionRef(&foc_motor.loop_pos, (float)target_position * FOC_PI / 18000.0f);
-            }
-
-            start_pending = 0;
-        }
-        else if (foc_motor.motor_state == FOC_STATE_STOPPED)
-        {
-            start_pending = 0;
-        }
-    }
 }
+
+
 
 static void FOC_CAN_Send(uint32_t id, uint8_t data[8])
 {

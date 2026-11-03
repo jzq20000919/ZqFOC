@@ -49,6 +49,9 @@ void FOC_LOOP_CUR_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleT
  */
 void FOC_LOOP_CUR_Update(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float v_bus);
 
+/** @brief 同步测速起点，清零电流PI，开启三相PWM与电流采样；不运行速度环。 */
+void FOC_LOOP_CUR_Start(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float v_bus);
+
 /**
  * @brief  设置d、q轴目标电流
  * @param  loop_cur 电流环句柄

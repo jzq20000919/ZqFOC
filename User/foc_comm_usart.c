@@ -1,393 +1,339 @@
 /**
- * @file    foc_comm_usart.c
- * @brief   USART 接收、命令执行和遥测发送；与 ZqFOC_PyQt6/zqfoc_pc.py 配套。
+ * @file foc_comm_usart.c
+ * @brief USART2 Modbus RTU：地址1，2 Mbps，8N2，功能码03/06/10。
  *
- * 数据流：RX DMA -> 字节缓冲 -> LF 分行 -> 严格校验 -> 已有 FOC 接口。
- *         ADC 置发送请求 -> 主循环取快照 -> TX DMA -> 完成回调释放缓冲。
- *
- * 命令：MS / MP / START / STOP / S<rpm> / A<度> / P<弧度>，每条以 \n 结束。
- * A 自动切到位置模式；P 是保留的旧接口，只改位置目标，不自动切模式。
- * START 复用现有对齐流程；对齐期间设置的目标仍可能被启动流程清零。
- *
- * DMA 在后台收发，中断只记状态。解析、打包和启停均由主循环执行。
- * 不使用堆内存、阻塞串口发送或逐字节接收中断。
+ * IOC负责硬件初始化；StartReceive启动DMA；Task在主循环解析、执行和回复。
+ * 浮点数采用ABCD顺序：高16位寄存器在前，每个寄存器高字节在前。
+ * 曲线每1ms采一组，5组组成一批；只保留最新批次，不补传历史。
  */
 #include "foc_comm_usart.h"
 #include "foc_manager.h"
-#include <errno.h>
+#include "foc_math.h"
+#include "usart.h"
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
-/* 一、协议和容量：改帧格式时必须同时修改 PC 端。 */
-#define TX_CHANNELS       10U
-#define TX_FRAME_SIZE     44U
-#define TX_PERIOD_MS      1U
-#define RX_DMA_SIZE       512U
-#define RX_BUDGET         128U  /* 每轮处理上限，避免连续输入占满主循环。 */
-#define COMMAND_SIZE      32U  /* 包括字符串末尾的 '\0'。 */
-_Static_assert(sizeof(float) == 4U, "The protocol requires 32-bit float");
+#define MODBUS_ADDRESS       1U
+#define RX_DMA_SIZE          512U
+#define FRAME_SIZE           256U
+#define FRAME_GAP_MS         3U  // 1ms计时下，至少留出2ms静默，不阻塞等待
+#define SAMPLE_CHANNELS     10U
+#define SAMPLES_PER_BATCH    5U
+#define BATCH_REGISTERS    102U  // 2个时间戳寄存器 + 5组×10个float×2
 
-/* 二、共享对象和状态：本模块只支持一个 UART、一台电机。 */
-static UART_HandleTypeDef *comm_uart;
-static FOC_ENCODER_HandleTypeDef *comm_encoder;
-static FOC_LOOP_CUR_HandleTypeDef *comm_cur;
-static FOC_LOOP_SPD_HandleTypeDef *comm_spd;
-static FOC_LOOP_POS_HandleTypeDef *comm_pos;
-static volatile FOC_CONTROL_MODE control_mode = FOC_CONTROL_SPEED;
+static uint8_t rx_dma[RX_DMA_SIZE];
+static uint8_t rx_frame[FRAME_SIZE];
+static uint8_t tx_frame[FRAME_SIZE];
+static uint16_t rx_read;
+static uint16_t rx_last_write;
+static uint32_t rx_last_tick;
 
-static uint8_t tx_buffer[TX_FRAME_SIZE]; /* 静态存储，DMA 完成前一直有效。 */
-static volatile uint8_t tx_busy;
-static volatile uint8_t telemetry_pending;
-static uint32_t tx_last_tick;
+static float samples[2][SAMPLES_PER_BATCH][SAMPLE_CHANNELS];
+static uint32_t batch_tick[2]; // 每批第一组的HAL_GetTick，单位ms
+static uint8_t sample_enabled;
+static uint8_t sample_index;
+static uint8_t write_batch;
+static volatile uint8_t ready_batch = 1U;
 
-static volatile uint8_t rx_dma_buffer[RX_DMA_SIZE]; /* DMA 写，主循环读。 */
-static volatile uint32_t rx_wrap_count; /* RX DMA 每写满一圈，由回调加一。 */
-static uint32_t rx_read_count;          /* 主循环累计消费的字节数。 */
-static volatile uint8_t rx_restart_pending;
-static uint32_t rx_overrun_count;       /* 可在调试器观察的缓冲覆盖次数。 */
-static char command_buffer[COMMAND_SIZE];
-static uint8_t command_length;
-static uint8_t command_discard;         /* 当前行损坏，直到 LF 都不执行。 */
-static uint8_t command_cr;              /* CR 只允许紧挨 LF，避免拼接坏命令。 */
-
-/* 三、DMA 接收：用累计写入量区分“没有数据”和“恰好写满一圈”。 */
 /**
- * @brief 在初始化或接收已停止后启动循环 DMA，并重置读写计数。
- * @return HAL_UART_Receive_DMA 的状态；失败由调用者处理或稍后重试。
- * @note 主循环调用；关掉不需要的半满中断，满缓冲中断仍用于计圈。
+ * @brief  将两个字节还原为一个16位无符号整数。
+ * @param[in] data 指向两个字节的指针，高字节在前、低字节在后。
+ * @return 还原后的16位整数。
+ * @note   用于读取请求中的寄存器地址、数量和值。
  */
-static HAL_StatusTypeDef StartRxDMA(void)
+static uint16_t Modbus_GetU16(const uint8_t *data)
 {
-    rx_wrap_count = 0U;
-    rx_read_count = 0U;
-    HAL_StatusTypeDef status = HAL_UART_Receive_DMA(
-        comm_uart, (uint8_t *)rx_dma_buffer, RX_DMA_SIZE);
-    if (status == HAL_OK)
-    {
-        __HAL_DMA_DISABLE_IT(comm_uart->hdmarx, DMA_IT_HT);
-    }
-    return status;
+    return ((uint16_t)data[0] << 8) | data[1];
 }
 
 /**
- * @brief 读取 DMA 累计写入字节数，短临界区内只读计数和寄存器。
- * @return uint32 累计字节数，允许自然回绕，差值也用无符号运算。
- * @note DMA 完成但回调尚未执行时，临时补算一圈，不能只比较读写下标。
- *       正常运行须及时服务 DMA 中断：2 Mbps 连续满速输入下每圈约 2.56 ms。
+ * @brief  将一个32位浮点数拆分到两个连续寄存器。
+ * @param[out] registers 指向两个uint16_t的指针，依次写入浮点数的高、低16位。
+ * @param[in] value 要写入的浮点数。
+ * @return 无。
+ * @note   只复制浮点数的二进制表示，不将浮点数转换为整数数值。
  */
-static uint32_t GetRxCount(void)
+static void Modbus_PutFloat(uint16_t *registers, float value)
 {
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    uint32_t wraps = rx_wrap_count;
-    uint32_t remaining = __HAL_DMA_GET_COUNTER(comm_uart->hdmarx);
-    if (__HAL_DMA_GET_FLAG(comm_uart->hdmarx,
-                          __HAL_DMA_GET_TC_FLAG_INDEX(comm_uart->hdmarx)) != 0U)
-    {
-        wraps++;
-        remaining = __HAL_DMA_GET_COUNTER(comm_uart->hdmarx);
-        if (remaining == 0U)
-        {
-            remaining = RX_DMA_SIZE; /* 重装载瞬间，不能重复计算同一圈。 */
-        }
-    }
-    __set_PRIMASK(primask);
-    return wraps * RX_DMA_SIZE + RX_DMA_SIZE - remaining;
-}
-
-/* 四、命令：传输层只负责完整性，执行层复用已有 FOC 功能。 */
-/**
- * @brief 把十进制文本解析为有限浮点数；允许符号、小数和科学计数法。
- * @param text 非空、以 '\0' 结束的数值字符串，不包含命令字母。
- * @param value 成功时写入解析结果。
- * @return 1 合法；0 空值、空格、十六进制、尾随字符、上溢或下溢。
- */
-static uint8_t ParseValue(const char *text, float *value)
-{
-    if (*text == '\0') return 0U;
-    for (const char *p = text; *p != '\0'; ++p)
-    {
-        if ((*p < '0' || *p > '9') && *p != '+' && *p != '-' &&
-            *p != '.' && *p != 'e' && *p != 'E') return 0U;
-    }
-    char *end;
-    errno = 0;
-    float parsed = strtof(text, &end);
-    if (end == text || *end != '\0' || errno == ERANGE || !isfinite(parsed))
-    {
-        return 0U;
-    }
-    *value = parsed;
-    return 1U;
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    registers[0] = (uint16_t)(bits >> 16);
+    registers[1] = (uint16_t)bits;
 }
 
 /**
- * @brief 执行一条完整且无非法字节的命令；仅由主循环调用。
- * @param command 不含 CR/LF、以 '\0' 结束的命令；未知命令直接忽略。
- * @note S 按 MOTOR_MAX_SPEED_RPM 限幅；A/P 先取单圈余数，避免巨大角度慢循环。
- *       没有 ACK；调用 START 不代表电机已经完成对齐并进入闭环。
+ * @brief  逐字节、逐位计算Modbus RTU的CRC16。
+ * @param[in] data 待计算的数据起始地址。
+ * @param[in] length 参与计算的字节数。
+ * @return CRC16计算结果。
+ * @note   发送时计算不含CRC的帧；接收时计算包含CRC的完整帧，结果应为0。
  */
-static void ExecuteCommand(const char *command)
+static uint16_t Modbus_CRC16(const uint8_t *data, uint16_t length)
 {
-    if (strcmp(command, "MS") == 0)
+    uint16_t crc = 0xFFFFU;
+    for (uint16_t i = 0U; i < length; ++i)
     {
-        FOC_COMM_USART_SetControlMode(FOC_CONTROL_SPEED);
-    }
-    else if (strcmp(command, "MP") == 0)
-    {
-        FOC_COMM_USART_SetControlMode(FOC_CONTROL_POSITION);
-    }
-    else if (strcmp(command, "START") == 0)
-    {
-        FOC_Motor_Start();
-    }
-    else if (strcmp(command, "STOP") == 0)
-    {
-        FOC_Motor_Stop();
-    }
-    else if (command[0] == 'S' || command[0] == 'A' || command[0] == 'P')
-    {
-        float value;
-        if (ParseValue(command + 1, &value) == 0U) return;
-        if (command[0] == 'S')
+        crc ^= data[i];
+        for (uint8_t bit = 0U; bit < 8U; ++bit)
         {
-            if (value > MOTOR_MAX_SPEED_RPM) value = MOTOR_MAX_SPEED_RPM;
-            if (value < -MOTOR_MAX_SPEED_RPM) value = -MOTOR_MAX_SPEED_RPM;
+            if (crc & 1U) crc = (crc >> 1) ^ 0xA001U;
+            else crc >>= 1;
         }
-        else if (command[0] == 'A')
-        {
-            value = fmodf(value, 360.0f) * FOC_PI / 180.0f;
-            FOC_COMM_USART_SetControlMode(FOC_CONTROL_POSITION);
-        }
-        else
-        {
-            value = fmodf(value, FOC_TWO_PI);
-        }
-
-        /* 只保护目标写入；解析、取余等运算都在临界区外完成。 */
-        uint32_t primask = __get_PRIMASK();
-        __disable_irq();
-        if (command[0] == 'S') FOC_LOOP_SPD_SetSpeedRef(comm_spd, value);
-        else FOC_LOOP_POS_SetPositionRef(comm_pos, value);
-        __set_PRIMASK(primask);
     }
+    return crc;
 }
 
 /**
- * @brief 消费一个 RX 字节；只在 LF 时执行，保存未结束的半条命令。
- * @param byte DMA 缓冲读出的字节。
- * @note LF 后重置行状态；超长、NUL、非 ASCII 或行内 CR 后的字符使整行作废。
+ * @brief  为回复添加CRC，并启动USART2的DMA发送。
+ * @param[in] length tx_frame中已有数据的字节数，不包含末尾的两个CRC字节。
+ * @return 无。
+ * @note   主循环调用，不等待发送完成；DMA发送期间不得改写tx_frame。
+ *         当前请求为广播地址0时不发送回复。
  */
-static void ConsumeByte(uint8_t byte)
+static void Modbus_Send(uint16_t length)
 {
-    if (byte == '\n')
-    {
-        if (command_discard == 0U && command_length > 0U)
-        {
-            command_buffer[command_length] = '\0';
-            ExecuteCommand(command_buffer);
-        }
-        command_length = 0U;
-        command_discard = 0U;
-        command_cr = 0U;
-        return;
-    }
-    if (command_discard != 0U) return;
-    if (command_cr != 0U)
-    {
-        command_discard = 1U; /* CR 后只允许 LF，不能把 ST\rOP 当成 STOP。 */
-    }
-    else if (byte == '\r')
-    {
-        command_cr = 1U;
-    }
-    else if (byte < 0x20U || byte > 0x7EU || command_length >= COMMAND_SIZE - 1U)
-    {
-        command_discard = 1U;
-    }
-    else
-    {
-        command_buffer[command_length++] = (char)byte;
-    }
+    if (rx_frame[0] == 0U) return; // 广播写入执行，但不回复
+    uint16_t crc = Modbus_CRC16(tx_frame, length);
+    tx_frame[length] = (uint8_t)crc; // CRC低字节先发送
+    tx_frame[length + 1U] = (uint8_t)(crc >> 8);
+    HAL_UART_Transmit_DMA(&huart2, tx_frame, length + 2U);
 }
 
-/* 五、公开接口：主循环负责实际收发，中断仅请求或通知完成。 */
-/** @brief 校验所有对象和 DMA 配置，建立初始状态并启动接收；参数见头文件。 */
-HAL_StatusTypeDef FOC_COMM_USART_Init(UART_HandleTypeDef *uart,
-                                     FOC_ENCODER_HandleTypeDef *encoder,
-                                     FOC_LOOP_CUR_HandleTypeDef *loop_cur,
-                                     FOC_LOOP_SPD_HandleTypeDef *loop_spd,
-                                     FOC_LOOP_POS_HandleTypeDef *loop_pos)
+/**
+ * @brief  启动USART2循环DMA接收，并允许记录曲线采样。
+ * @return 无。
+ * @note   在main中完成外设和FOC初始化后调用一次。
+ *         串口及DMA配置由IOC生成，本函数不重复初始化硬件。
+ */
+void Modbus_StartReceive(void)
 {
-    if (comm_uart != NULL) return HAL_BUSY;
-    if (uart == NULL || encoder == NULL || loop_cur == NULL ||
-        loop_spd == NULL || loop_pos == NULL || uart->hdmarx == NULL ||
-        uart->hdmatx == NULL || uart->hdmarx->Init.Mode != DMA_CIRCULAR ||
-        uart->hdmatx->Init.Mode != DMA_NORMAL) return HAL_ERROR;
-
-    comm_uart = uart;
-    comm_encoder = encoder;
-    comm_cur = loop_cur;
-    comm_spd = loop_spd;
-    comm_pos = loop_pos;
-    control_mode = FOC_CONTROL_SPEED;
-    tx_busy = 0U;
-    telemetry_pending = 0U;
-    tx_last_tick = HAL_GetTick() - TX_PERIOD_MS;
-    rx_restart_pending = 0U;
-    rx_overrun_count = 0U;
-    command_length = 0U;
-    command_discard = 0U;
-    command_cr = 0U;
-
-    HAL_StatusTypeDef status = StartRxDMA();
-    if (status != HAL_OK) comm_uart = NULL;
-    return status;
+    HAL_UART_Receive_DMA(&huart2, rx_dma, sizeof(rx_dma));
+    // 循环DMA持续接收，主循环读取写入位置，不需要半满/全满中断。
+    __HAL_DMA_DISABLE_IT(huart2.hdmarx, DMA_IT_HT | DMA_IT_TC);
+    sample_enabled = 1U;
 }
 
-/** @brief 读取全工程共用的模式；读取不会重置目标或积分。 */
+/**
+ * @brief  读取串口、CAN和按键共用的电机控制模式。
+ * @return FOC_CONTROL_SPEED表示速度模式，FOC_CONTROL_POSITION表示位置模式。
+ * @note   只读取foc_motor.control_mode，不改变目标值或电机状态。
+ */
 FOC_CONTROL_MODE FOC_COMM_USART_GetControlMode(void)
 {
-    return control_mode;
-}
-
-/** @brief 在主循环切换模式，复位相关目标/积分；重复选择当前模式不清零目标。 */
-void FOC_COMM_USART_SetControlMode(FOC_CONTROL_MODE mode)
-{
-    if (comm_uart == NULL || mode == control_mode ||
-        (mode != FOC_CONTROL_SPEED && mode != FOC_CONTROL_POSITION)) return;
-
-    /* 与控制中断互斥，结束时恢复原中断状态，不强行打开原本关闭的中断。
-     * 这里只读取编码器计数并更新少量对象，不等待外设、不进行串口收发。 */
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq();
-    if (mode == FOC_CONTROL_POSITION)
-    {
-        FOC_ENCODER_UpdateAngle(comm_encoder);
-        FOC_LOOP_POS_SetPositionRef(comm_pos, comm_encoder->angle_m);
-    }
-    FOC_LOOP_SPD_SetSpeedRef(comm_spd, 0.0f);
-    FOC_PI_Reset(&comm_spd->pi_spd);
-    FOC_PI_Reset(&comm_pos->pi_pos);
-    control_mode = mode;
-    __set_PRIMASK(primask);
-}
-
-/** @brief ADC 中断只提交“有更新”标志，不在中断里打包或调用 HAL 发送。 */
-void FOC_COMM_USART_RequestTelemetry(void)
-{
-    telemetry_pending = 1U;
-}
-
-/** @brief 主循环消费 RX DMA 字节并执行完整命令，异常时先恢复接收再重新同步。 */
-void FOC_COMM_USART_ProcessRx(void)
-{
-    if (comm_uart == NULL) return;
-    if (rx_restart_pending != 0U)
-    {
-        /* 只中止接收，不影响可能仍在进行的 TX DMA；失败留待下一轮处理。 */
-        if (HAL_UART_AbortReceive(comm_uart) != HAL_OK) return;
-        command_discard = 1U;
-        rx_restart_pending = 0U;
-        if (StartRxDMA() != HAL_OK) rx_restart_pending = 1U;
-        return;
-    }
-
-    for (uint32_t i = 0U; i < RX_BUDGET; ++i)
-    {
-        if (rx_restart_pending != 0U) return;
-        uint32_t received = GetRxCount();
-        if ((uint32_t)(received - rx_read_count) > RX_DMA_SIZE)
-        {
-            rx_overrun_count++;
-            rx_read_count = received;
-            command_discard = 1U; /* 旧数据被覆盖，不能执行其中残存的半条命令。 */
-            return;
-        }
-        if (received == rx_read_count) break;
-        uint8_t byte = rx_dma_buffer[rx_read_count % RX_DMA_SIZE];
-        if (rx_restart_pending != 0U) return;
-        received = GetRxCount();
-        if ((uint32_t)(received - rx_read_count) > RX_DMA_SIZE)
-        {
-            rx_overrun_count++;
-            rx_read_count = received;
-            command_discard = 1U; /* 读字节期间被高优先级中断打断，也要检查覆盖。 */
-            return;
-        }
-        rx_read_count++;
-        ConsumeByte(byte);
-    }
-}
-
-/** @brief 主循环把最新十个值打包为 JustFloat 帧，并非阻塞提交 TX DMA。 */
-void FOC_COMM_USART_ProcessTx(void)
-{
-    if (comm_uart == NULL || telemetry_pending == 0U) return;
-    uint32_t now = HAL_GetTick();
-    if ((uint32_t)(now - tx_last_tick) < TX_PERIOD_MS) return;
-    telemetry_pending = 0U; /* 遥测只关心最新值；忙时丢帧，不累积旧帧。 */
-    if (tx_busy != 0U) return;
-
-    float values[TX_CHANNELS];
-    const volatile FOC_LOOP_SPD_HandleTypeDef *spd = comm_spd;
-    const volatile FOC_LOOP_CUR_HandleTypeDef *cur = comm_cur;
-    uint32_t primask = __get_PRIMASK();
-    __disable_irq(); /* 只复制快照；防止同一帧混入控制中断更新到一半的数据。 */
-    values[0] = spd->speed_ref;               /* CH0：目标转速，rpm。 */
-    values[1] = spd->speed_fbk;               /* CH1：反馈转速，rpm。 */
-    values[2] = cur->id_ref;                  /* CH2：d 轴目标电流，A。 */
-    values[3] = cur->i_d;                     /* CH3：d 轴反馈电流，A。 */
-    values[4] = cur->iq_ref;                  /* CH4：q 轴目标电流，A。 */
-    values[5] = cur->i_q;                     /* CH5：q 轴反馈电流，A。 */
-    values[6] = cur->v_d;                     /* CH6：d 轴电压，V。 */
-    values[7] = cur->v_q;                     /* CH7：q 轴电压，V。 */
-    values[8] = ((volatile FOC_LOOP_POS_HandleTypeDef *)comm_pos)->position_ref;
-    values[9] = ((volatile FOC_ENCODER_HandleTypeDef *)comm_encoder)->angle_m;
-    __set_PRIMASK(primask);
-    values[8] *= 180.0f / FOC_PI;             /* CH8：目标单圈机械角，度。 */
-    values[9] *= 180.0f / FOC_PI;             /* CH9：实际单圈机械角，度。 */
-
-    /* STM32G4 的 float32 为小端 IEEE754，与 PC 的 struct.unpack("<10f") 对应。
-     * memcpy 避免类型别名和对齐问题；DMA 持有的是静态 tx_buffer。 */
-    memcpy(tx_buffer, values, sizeof(values));
-    tx_buffer[40] = 0x00U;
-    tx_buffer[41] = 0x00U;
-    tx_buffer[42] = 0x80U;
-    tx_buffer[43] = 0x7FU;
-    tx_busy = 1U; /* 必须在提交前置忙，防止完成回调先于此处清忙。 */
-    if (HAL_UART_Transmit_DMA(comm_uart, tx_buffer, TX_FRAME_SIZE) == HAL_OK)
-    {
-        tx_last_tick = now;
-    }
-    else
-    {
-        tx_busy = 0U; /* 提交失败，DMA 未持有本帧；下一次请求可以重试。 */
-    }
-}
-
-/* 六、HAL 回调：HAL 全局回调只能有一份，全部检查 UART 归属。 */
-/** @brief RX DMA 满一圈回调：只累计圈数，循环 DMA 无需重启。 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *uart)
-{
-    if (comm_uart != NULL && uart == comm_uart) rx_wrap_count++;
-}
-
-/** @brief TX 完成回调：HAL 已结束本帧发送，释放静态缓冲供主循环复用。 */
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *uart)
-{
-    if (comm_uart != NULL && uart == comm_uart) tx_busy = 0U;
+    return foc_motor.control_mode;
 }
 
 /**
- * @brief UART/DMA 错误回调：接收终止则请求恢复；发送终止则释放发送缓冲。
- * @param uart HAL 报错的 UART；其他 UART 不处理。
- * @note 不在中断中 abort/restart 或等待。损坏的当前命令作废到下一个 LF。
+ * @brief  在电机停止时选择控制模式。
+ * @param[in] mode FOC_CONTROL_SPEED为速度模式，FOC_CONTROL_POSITION为位置模式。
+ * @return 无。
+ * @note   主循环调用；电机不在STOPPED状态时不修改模式，保留已有目标值。
  */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *uart)
+void FOC_COMM_USART_SetControlMode(FOC_CONTROL_MODE mode)
 {
-    if (comm_uart == NULL || uart != comm_uart) return;
-    if (uart->RxState == HAL_UART_STATE_READY) rx_restart_pending = 1U;
-    if (uart->gState == HAL_UART_STATE_READY) tx_busy = 0U;
+    if (foc_motor.motor_state != FOC_STATE_STOPPED) return;
+    if (mode > FOC_CONTROL_POSITION) return;
+    foc_motor.control_mode = mode;
+}
+
+/**
+ * @brief  记录一组10通道数据，每5组发布一个完整采样批次。
+ * @return 无。
+ * @note   由SysTick每1ms调用，所有电机状态均采样；启动接收前不记录。
+ *         两个固定缓冲区轮换使用，时间戳记录本批第一组的毫秒计数。
+ *         通道顺序见头文件；位置以度保存，只保留最新完整批次。
+ */
+void Modbus_Sample(void)
+{
+    if (!sample_enabled) return;
+    if (sample_index == 0U) batch_tick[write_batch] = HAL_GetTick();
+    float *values = samples[write_batch][sample_index];
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq(); // 只复制反馈值，避免复制一半时控制中断更新变量
+    values[0] = foc_motor.loop_spd.speed_ref;
+    values[1] = foc_motor.loop_spd.speed_fbk;
+    values[2] = foc_motor.loop_cur.id_ref;
+    values[3] = foc_motor.loop_cur.i_d;
+    values[4] = foc_motor.loop_cur.iq_ref;
+    values[5] = foc_motor.loop_cur.i_q;
+    values[6] = foc_motor.loop_cur.v_d;
+    values[7] = foc_motor.loop_cur.v_q;
+    values[8] = foc_motor.loop_pos.position_ref;
+    values[9] = foc_motor.encoder.angle_m;
+    __set_PRIMASK(primask);
+    values[8] *= 180.0f / FOC_PI;
+    values[9] *= 180.0f / FOC_PI;
+    if (++sample_index == SAMPLES_PER_BATCH)
+    {
+        sample_index = 0U;
+        ready_batch = write_batch;
+        write_batch ^= 1U;
+    }
+}
+
+/**
+ * @brief  处理功能码03，读取状态、目标值或最新完整采样批次。
+ * @return 无。
+ * @note   由Modbus_Task在主循环调用，从rx_frame读取起始地址和数量。
+ *         将寄存器按高字节在前的顺序装入tx_frame后发送。
+ *         仅接受头文件约定范围内的连续读取，不跨越寄存器区域。
+ */
+static void Modbus_ReadRegisters(void)
+{
+    uint16_t address = Modbus_GetU16(rx_frame + 2);
+    uint16_t count = Modbus_GetU16(rx_frame + 4);
+    uint16_t registers[BATCH_REGISTERS];
+    uint16_t offset;
+    if (count == 0U || count > 125U) return;
+
+    if (address <= 0x0001U && count <= 2U - address)
+    {
+        registers[0] = (uint16_t)foc_motor.motor_state;
+        registers[1] = (uint16_t)foc_motor.control_mode;
+        offset = address;
+    }
+    else if (address >= 0x0010U && address <= 0x0013U && count <= 0x0014U - address)
+    {
+        Modbus_PutFloat(registers, foc_motor.speed_target);
+        Modbus_PutFloat(registers + 2, foc_motor.position_target * 180.0f / FOC_PI);
+        offset = address - 0x0010U;
+    }
+    else if (address >= 0x0100U && address <= 0x0165U && count <= 0x0166U - address)
+    {
+        float values[SAMPLES_PER_BATCH * SAMPLE_CHANNELS];
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq(); // 复制完整批次后立即恢复中断，字节转换在外面做
+        uint32_t tick = batch_tick[ready_batch];
+        memcpy(values, samples[ready_batch], sizeof(values));
+        __set_PRIMASK(primask);
+        registers[0] = (uint16_t)(tick >> 16);
+        registers[1] = (uint16_t)tick;
+        for (uint16_t i = 0U; i < SAMPLES_PER_BATCH * SAMPLE_CHANNELS; ++i)
+            Modbus_PutFloat(registers + 2U + i * 2U, values[i]);
+        offset = address - 0x0100U;
+    }
+    else return;
+
+    tx_frame[0] = MODBUS_ADDRESS;
+    tx_frame[1] = 0x03U;
+    tx_frame[2] = (uint8_t)(count * 2U);
+    for (uint16_t i = 0U; i < count; ++i)
+    {
+        tx_frame[3U + i * 2U] = (uint8_t)(registers[offset + i] >> 8);
+        tx_frame[4U + i * 2U] = (uint8_t)registers[offset + i];
+    }
+    Modbus_Send(3U + count * 2U);
+}
+
+/**
+ * @brief  处理功能码06，写入控制模式或执行电机指令。
+ * @return 无。
+ * @note   由Modbus_Task在主循环调用，从rx_frame读取地址和值。
+ *         地址0001选择模式；0002的值1/2/3分别调用启动、停止、回零。
+ *         manager负责电机状态限制；指令回复不表示运动已经完成。
+ */
+static void Modbus_WriteRegister(void)
+{
+    uint16_t address = Modbus_GetU16(rx_frame + 2);
+    uint16_t value = Modbus_GetU16(rx_frame + 4);
+    switch (address)
+    {
+        case 0x0001: // STOP中选择速度/位置模式
+            if (foc_motor.motor_state != FOC_STATE_STOPPED || value > 1U) return;
+            FOC_COMM_USART_SetControlMode((FOC_CONTROL_MODE)value);
+            break;
+        case 0x0002: // 电机流程仍由manager处理
+            switch (value)
+            {
+                case 1: FOC_Motor_Start();  break;
+                case 2: FOC_Motor_Stop();   break;
+                case 3: FOC_Motor_GoZero(); break;
+                default: return;
+            }
+            break;
+        default: return;
+    }
+    memcpy(tx_frame, rx_frame, 6U); // 功能码06原样回复地址和值
+    Modbus_Send(6U);
+}
+
+/**
+ * @brief  处理功能码10，将两个寄存器还原为一个浮点目标值。
+ * @return 无。
+ * @note   由Modbus_Task在主循环调用，仅处理一次写入一个float的请求。
+ *         地址0010写转速，单位rpm；0012写位置，单位度，内部转换为rad。
+ *         ALIGNING中不修改目标；运行中只修改当前控制模式对应的目标。
+ *         更新用户目标后，由manager的运行状态函数应用到控制环。
+ */
+static void Modbus_WriteRegisters(void)
+{
+    uint16_t address = Modbus_GetU16(rx_frame + 2);
+    uint32_t bits = ((uint32_t)Modbus_GetU16(rx_frame + 7) << 16)
+                  | Modbus_GetU16(rx_frame + 9);
+    float value;
+    memcpy(&value, &bits, sizeof(value));
+    if (foc_motor.motor_state == FOC_STATE_ALIGNING) return;
+    switch (address)
+    {
+        case 0x0010: // 转速目标，rpm
+            if (foc_motor.motor_state == FOC_STATE_RUNNING_POSITION) return;
+            if (value > MOTOR_MAX_SPEED_RPM) value = MOTOR_MAX_SPEED_RPM;
+            if (value < -MOTOR_MAX_SPEED_RPM) value = -MOTOR_MAX_SPEED_RPM;
+            foc_motor.speed_target = value;
+            break;
+        case 0x0012: // 位置目标，通信使用度，电机内部使用rad
+            if (foc_motor.motor_state == FOC_STATE_RUNNING_SPEED) return;
+            value = fmodf(value, 360.0f) * FOC_PI / 180.0f;
+            foc_motor.position_target = FOC_MATH_Normalize(value);
+            break;
+        default: return;
+    }
+    memcpy(tx_frame, rx_frame, 6U); // 功能码10回复起始地址和寄存器数量
+    Modbus_Send(6U);
+}
+
+/**
+ * @brief  检查DMA接收进度，取出完整请求并分发给对应功能码处理函数。
+ * @return 无。
+ * @note   启动接收后，在主循环中反复调用；不阻塞等待数据或发送完成。
+ *         DMA写入位置连续3个毫秒计数不变后，按一帧处理已收到的数据。
+ *         检查帧长度、设备地址和CRC后处理03/06/10，无效请求直接丢弃。
+ *         DMA发送期间直接返回，避免覆盖正在发送的回复。
+ */
+void Modbus_Task(void)
+{
+    // 一次请求只产生一次回复，DMA发送期间不改写发送缓冲区。
+    if (huart2.gState != HAL_UART_STATE_READY) return;
+    uint16_t write = (RX_DMA_SIZE - __HAL_DMA_GET_COUNTER(huart2.hdmarx)) % RX_DMA_SIZE;
+    if (write != rx_last_write)
+    {
+        rx_last_write = write;
+        rx_last_tick = HAL_GetTick();
+        return;
+    }
+    if (write == rx_read || HAL_GetTick() - rx_last_tick < FRAME_GAP_MS) return;
+
+    uint16_t length = (write + RX_DMA_SIZE - rx_read) % RX_DMA_SIZE;
+    if (length > FRAME_SIZE) { rx_read = write; return; }
+    for (uint16_t i = 0U; i < length; ++i)
+    {
+        rx_frame[i] = rx_dma[rx_read];
+        rx_read = (rx_read + 1U) % RX_DMA_SIZE;
+    }
+    if (length < 4U || (rx_frame[0] != MODBUS_ADDRESS && rx_frame[0] != 0U)) return;
+    if (Modbus_CRC16(rx_frame, length) != 0U) return;
+
+    switch (rx_frame[1])
+    {
+        case 0x03:
+            if (length == 8U && rx_frame[0] != 0U) Modbus_ReadRegisters();
+            break;
+        case 0x06:
+            if (length == 8U) Modbus_WriteRegister();
+            break;
+        case 0x10: // 基础版本：一次写两个寄存器，即一个float
+            if (length == 13U && Modbus_GetU16(rx_frame + 4) == 2U && rx_frame[6] == 4U)
+                Modbus_WriteRegisters();
+            break;
+    }
 }

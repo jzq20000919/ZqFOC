@@ -10,13 +10,24 @@ void FOC_BUS_VOLTAGE_Init(FOC_BUS_VOLTAGE_HandleTypeDef *bus, ADC_HandleTypeDef 
     bus->hadc = hadc;
     bus->raw = 0;
     bus->voltage = 0.0f;
+    bus->last_tick = HAL_GetTick() - 10U;
+    bus->pending = 0U;
 }
 
 void FOC_BUS_VOLTAGE_Update(FOC_BUS_VOLTAGE_HandleTypeDef *bus)
 {
-    // 常规组在主循环中软件触发；保留ADC运行状态供注入组采样使用。
+    if (bus->pending != 0U)
+    {
+        if (__HAL_ADC_GET_FLAG(bus->hadc, ADC_FLAG_EOC))
+        {
+            bus->raw = (uint16_t)HAL_ADC_GetValue(bus->hadc);
+            bus->voltage = (float)bus->raw * (ADC_VREF / ADC_FULL_SCALE) * BUS_VOLTAGE_DIVIDER_RATIO;
+            bus->pending = 0U;
+        }
+        return;
+    }
+    if ((uint32_t)(HAL_GetTick() - bus->last_tick) < 10U) return;
+    bus->last_tick = HAL_GetTick();
     HAL_ADC_Start(bus->hadc);
-    HAL_ADC_PollForConversion(bus->hadc, 1);
-    bus->raw = (uint16_t)HAL_ADC_GetValue(bus->hadc);
-    bus->voltage = (float)bus->raw * (ADC_VREF / ADC_FULL_SCALE) * BUS_VOLTAGE_DIVIDER_RATIO;
+    bus->pending = 1U;
 }

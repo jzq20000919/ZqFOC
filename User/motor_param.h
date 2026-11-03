@@ -23,6 +23,9 @@
 #define ENCODER_CPR                 4096U      // 每机械圈计数
 #define ENCODER_SPEED_FILTER_TS     0.005f     // 测速一阶低通时间常数，s；从2ms增至5ms增强平滑，过大会增加闭环反馈延迟，设0可关闭滤波
 #define ENCODER_ELECTRICAL_OFFSET   0.0f       // 初始电角度偏置，rad
+#define ENCODER_HOME_SPEED_RPM      20.0f      // 固定正方向寻Z，回零限速
+#define ENCODER_HOME_ERROR_RAD      (0.5f * FOC_PI / 180.0f)
+#define ENCODER_HOME_SPEED_ERROR    3.0f       // 到位速度阈值，rpm
 
 // 控制频率与周期
 #define PWM_FREQUENCY_HZ            16000.0f   // PWM频率，Hz
@@ -58,7 +61,6 @@
 #define ADC_CURRENT_OFFSET_C        2031.0f    // C相零电流ADC计数
 #define CURRENT_OFFSET_SAMPLE_COUNT 24U        // 上电零电流采样次数
 #define CURRENT_OFFSET_SAMPLE_INTERVAL_MS 2U   // 相邻零点采样间隔，ms
-#define CURRENT_OFFSET_SAMPLE_TIMEOUT_MS 5U    // 单次等待ADC注入转换超时，ms
 #define CURRENT_SCALE \
     (ADC_VREF / (ADC_FULL_SCALE * CURRENT_SHUNT_RESISTANCE * CURRENT_AMP_GAIN)) // 电流换算系数，A/计数
 
@@ -82,6 +84,5 @@
 #define ENCODER_ALIGN_ANGLE         0.0f       // 对齐电角度，rad
 #define ENCODER_ALIGN_SAMPLE_COUNT  10U        // 对齐后编码器采样次数
 #define ENCODER_ALIGN_SAMPLE_INTERVAL_MS 2U    // 相邻编码器采样间隔，ms
-#define ENCODER_ALIGN_SAMPLE_TIMEOUT_MS 100U   // 对齐后的采样总超时，ms
 #define ENCODER_ALIGN_RELEASE_TIME_MS 800U     // 撤掉对齐电压后的释放等待，ms
 #endif // MOTOR_PARAM_H

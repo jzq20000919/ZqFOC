@@ -20,6 +20,10 @@ typedef struct
     float i_a; // A相电流，A
     float i_b; // B相电流，A
     float i_c; // 由A、B相重构的C相电流，A
+    uint32_t offset_sum_a;
+    uint32_t offset_sum_b;
+    uint32_t offset_count;
+    uint32_t offset_tick; // 分步校准进度，Init时清零
 
 } FOC_CURRENT_HandleTypeDef;
 
@@ -36,13 +40,21 @@ void FOC_CURRENT_Init(FOC_CURRENT_HandleTypeDef *current,ADC_HandleTypeDef *hadc
  */
 void FOC_CURRENT_Update(FOC_CURRENT_HandleTypeDef *current);
 
+/** @brief 开启注入采样与CH4触发；interrupt为0用于零点校准，为1用于电流环。 */
+void FOC_CURRENT_StartSampling(FOC_CURRENT_HandleTypeDef *current,
+                               TIM_HandleTypeDef *timer, uint8_t interrupt);
+/** @brief 关闭CH4触发和两路注入采样。 */
+void FOC_CURRENT_StopSampling(FOC_CURRENT_HandleTypeDef *current, TIM_HandleTypeDef *timer);
+
 /**
  * @brief  三相功率输出关闭时，按固定间隔采样并校准A、B相电流零点
  * @param  current 电流采样句柄，注入ADC和TIM1 CH4须已启动
  * @param  pwm_timer 三相PWM定时器句柄
- * @return HAL_OK 校准成功，HAL_ERROR或HAL_TIMEOUT 校准失败
+ * @return 重复调用：0表示尚未完成，1表示已经完成。
+ * @note 每次只读取一个新样本，不等待、不延时。
+ *       完成后自动关闭本次校准采样，后续调用直接返回1。
  */
-HAL_StatusTypeDef FOC_CURRENT_CalibrateOffset(
+uint8_t FOC_CURRENT_CalibrateOffset(
     FOC_CURRENT_HandleTypeDef *current,
     TIM_HandleTypeDef *pwm_timer);
 

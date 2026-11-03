@@ -26,6 +26,20 @@ void FOC_LOOP_CUR_Init(FOC_LOOP_CUR_HandleTypeDef *loop_cur, FOC_ENCODER_HandleT
     FOC_PI_Init(&loop_cur->pi_iq, kp_iq, ki_iq,-voltage_limit,voltage_limit);
 
 }
+void FOC_LOOP_CUR_Start(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float v_bus)
+{
+    FOC_ENCODER_UpdateAngle(loop_cur->encoder);
+    loop_cur->encoder->spd_last_count = loop_cur->encoder->count;
+    loop_cur->encoder->speed = 0.0f;
+    loop_cur->encoder->speed_raw = 0.0f;
+    FOC_PI_Reset(&loop_cur->pi_id);
+    FOC_PI_Reset(&loop_cur->pi_iq);
+    FOC_LOOP_CUR_SetReference(loop_cur, 0.0f, 0.0f);
+    FOC_SVPWM_Update(loop_cur->svpwm, 0.0f, 0.0f, v_bus);
+    FOC_SVPWM_Start(loop_cur->svpwm);
+    FOC_CURRENT_StartSampling(loop_cur->current, loop_cur->svpwm->htim, 1U);
+}
+
 void FOC_LOOP_CUR_SetReference(FOC_LOOP_CUR_HandleTypeDef *loop_cur, float id_ref, float iq_ref)
 {
     loop_cur->id_ref = id_ref;

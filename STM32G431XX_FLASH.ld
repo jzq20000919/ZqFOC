@@ -56,7 +56,9 @@ ENTRY(Reset_Handler)
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 32K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 128K
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 126K
+/* 第63页保留给机械零点参数，程序不能链接到这里。 */
+ENCODER_ZERO (r) : ORIGIN = 0x0801F800, LENGTH = 2K
 }
 
 /* Highest address of the user mode stack */

@@ -126,7 +126,7 @@ bool comm_can_parse_status(const CAN_RxMessage_t *message, CAN_Status_t *status)
     if (message == NULL || status == NULL) return false;   // 检查参数
     if (message->id != CAN_ID_STATUS) return false;        // 检查报文ID
     if (message->d_length != CAN_FRAME_DLC) return false;  // 检查数据长度
-    if (message->data[0] > CAN_STATE_RUNNING || message->data[1] > CAN_MODE_POSITION) return false;   // 检查数据有效性
+    if (message->data[0] > CAN_STATE_RUNNING_POSITION || message->data[1] > CAN_MODE_POSITION) return false;   // 检查数据有效性
     status->state = (CAN_State_t)message->data[0];   // 解析运行状态
     status->mode = (CAN_Mode_t)message->data[1];     // 解析控制模式
     return true;   // 解析成功

@@ -31,6 +31,7 @@
 #include "foc_lib.h"
 #include "foc_manager.h"
 #include "foc_can.h"
+#include "foc_key.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -107,6 +108,8 @@ int main(void)
   MX_FDCAN1_Init();
   /* USER CODE BEGIN 2 */
   FOC_Motor_Init();
+  FOC_KEY_Init();
+  Modbus_StartReceive();
   if (FOC_CAN_Init() != HAL_OK)
   {
       Error_Handler();
@@ -120,7 +123,10 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    Modbus_Task();
     FOC_CAN_ProcessRx();
+    FOC_KEY_Task();
+    FOC_BUS_VOLTAGE_Update(&foc_motor.bus_voltage);
     FOC_Motor_Task();
     FOC_CAN_SendFeedback();
   }
@@ -177,9 +183,9 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   static uint8_t pos_cnt = 0;
-  if(htim == &htim6 && foc_motor.motor_state == FOC_STATE_RUNNING)
+  if(htim == &htim6 && foc_motor.control_active != 0U)
   {
-    if(FOC_COMM_USART_GetControlMode() == FOC_CONTROL_POSITION)
+    if(foc_motor.position_active != 0U)
     {
       if(++pos_cnt >= 5U)
       {
@@ -194,22 +200,27 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     FOC_LOOP_SPD_Update(&foc_motor.loop_spd, SPEED_LOOP_TS);
   }
 }
-// ADC注入转换完成后运行16kHz电流环，每4次请求一次遥测。
+// 电流环也在ALIGNING的寻Z/回零期间执行。通信不依赖控制中断。
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-  static uint8_t telemetry_divider = 0U;
   if(hadc == &hadc1)
   {
-    if (foc_motor.motor_state != FOC_STATE_RUNNING)
+    if (foc_motor.control_active == 0U)
     {
       return;
     }
     FOC_LOOP_CUR_Update(&foc_motor.loop_cur, foc_motor.bus_voltage.voltage);
-    if(++telemetry_divider >= 4U)
-    {
-      telemetry_divider = 0U;
-      FOC_COMM_USART_RequestTelemetry();
-    }
+  }
+}
+
+// Z上升沿只锁存一次计数，主循环再计算零点并切换控制目标。
+void HAL_GPIO_EXTI_Callback(uint16_t pin)
+{
+  if (pin == GPIO_PIN_8 && foc_motor.encoder.index_armed != 0U)
+  {
+    foc_motor.encoder.index_count = __HAL_TIM_GET_COUNTER(&htim3);
+    foc_motor.encoder.index_found = 1U;
+    foc_motor.encoder.index_armed = 0U;
   }
 }
 /* USER CODE END 4 */
